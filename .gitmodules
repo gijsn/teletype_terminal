@@ -1,3 +1,0 @@
-[submodule "esp-idf"]
-	path = teletype_esp32/esp-idf
-	url = ../../espressif/esp-idf.git
