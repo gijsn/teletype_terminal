@@ -1,59 +1,79 @@
-#include "sdkconfig.h"
-
 // system includes
-#include <chrono>
-#include <memory>
-#include <string>
-#include <thread>
-
+#include <Arduino.h>
+#include <ESP8266WiFi.h>
 // esp-idf includes
-#include <driver/gpio.h>
-#include <esp_log.h>
-#include <esp_system.h>
-#include <freertos/FreeRTOS.h>
-#include <freertos/task.h>
 
 // local includes
-#include "mode_manager.hpp"
-#include "serial_handler.hpp"
-#include "teletype.hpp"
+#include "serial_handler.h"
+#include "stream_manager.h"
+#include "teletype.h"
 
+#define RX_PIN 2
+#define TX_PIN 5
 namespace {
 constexpr const char TAG[] = "MAIN";
-} // namespace
+}  // namespace
 
-extern "C" [[noreturn]] void app_main(void)
-{
-    ESP_LOGI(TAG, "ESP32 Teletype Debug");
-    //esp_log_level_set(TAG, ESP_LOG_WARN);
+WiFiServer server(23);  // Telnet port
+WiFiClient client;
+Teletype* tty;
+SerialHandler* serial_handler;
+StreamManager streamManager;
 
-    gpio_install_isr_service(ESP_INTR_FLAG_LEVEL1);
+void setup() {
+    Serial.begin(115200);
 
-    Teletype* tty = new Teletype(50, GPIO_NUM_22, GPIO_NUM_23, 68);
-    SerialHandler* serial_handler = new SerialHandler(tty);
-    ModeManager* mode_manager = new ModeManager(tty, serial_handler);
+    // Set up WiFi AP
+    WiFi.mode(WIFI_AP);
+    WiFi.softAP("TeletypeTerminal", "password");
+    IPAddress IP = WiFi.softAPIP();
+    Serial.print("AP IP address: ");
+    Serial.println(IP);
 
-    // TTY_TX_PIN (Keyboard config)
-    gpio_config_t io_conf = {
-        .pin_bit_mask = (1ULL << tty->get_TTY_TX_PIN()),
-        .mode = GPIO_MODE_INPUT,
-        .pull_up_en = GPIO_PULLUP_ENABLE,
-        .intr_type = GPIO_INTR_POSEDGE,
-    };
-    gpio_config(&io_conf);
-    //gpio_install_isr_service(ESP_INTR_FLAG_LEVEL1);
-    gpio_isr_handler_add(tty->get_TTY_TX_PIN(), serial_handler->data_isr_handler, nullptr);
+    server.begin();
+    Serial.println("Telnet server started");
 
-    // --- Start UART task ---
-    xTaskCreate(serial_handler->uart_task_rx, "UART Task RX", 4096, nullptr, 1, nullptr);
+    Serial.printf("ESP8266 Teletype Multi-Source\n");
 
-    // std::string my_string = "the quick brown fox jumps over the lazy dog 1234567890\n-?:().,\'=/+\a\n";
+    tty = new Teletype(50, RX_PIN, TX_PIN, 68);
+    serial_handler = new SerialHandler(tty);
 
-    // tty.print_string(my_string);
-    // tty.print_all_characters();
+    // Subscribe outputs to the stream
+    streamManager.subscribe([](char c) { Serial.write(c); });
+    streamManager.subscribe([](char c) { serial_handler->sendToTTY(c); });
+    streamManager.subscribe([](char c) {
+        if (client && client.connected()) {
+            client.write(c);
+        }
+    });
+}
 
-    while (true)
-    {
-        vTaskDelay(1000 / portTICK_PERIOD_MS);
+void loop() {
+    // Check for new WiFi client
+    if (!client || !client.connected()) {
+        client = server.available();
+        if (client) {
+            Serial.println("New client connected");
+        }
     }
+
+    // Handle Serial input
+    if (Serial.available()) {
+        char c = Serial.read();
+        streamManager.publish(c);
+    }
+
+    // Handle WiFi input
+    if (client && client.available()) {
+        char c = client.read();
+        streamManager.publish(c);
+    }
+
+    // Handle Teletype input
+    char tty_char = tty->rx_bits_from_tty();
+    if (tty_char != '\0') {
+        streamManager.publish(tty_char);
+    }
+
+    delay(1);
 }

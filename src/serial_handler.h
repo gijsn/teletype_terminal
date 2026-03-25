@@ -5,35 +5,24 @@
 #include <memory>
 #include <mutex>
 #include <thread>
-
-// esp-idf includes
-#include <driver/uart.h>
-
 // local includes
-#include "teletype.hpp"
+#include "teletype.h"
 
-class SerialHandler
-{
-public:
+class SerialHandler {
+   public:
     SerialHandler(Teletype* tty);
 
-    [[noreturn]] static void uart_task_rx(void *pvParameters);
-    static void uart_task_tx(void *pvParameters);
-
-    static void IRAM_ATTR data_isr_handler(void* arg);
+    [[noreturn]] static void uart_task_rx();
+    static void uart_task_tx(char buf);
+    static void sendToTTY(char buf);
 
     static void local_loop_enable();
     static void local_loop_disable();
     static bool get_local_loopback_enabled();
 
-private:
+   private:
     static bool flush_buffer;
-    static std::mutex uart_buffer_mutex;
-    static std::mutex loopbcak_mutex;
     static Teletype* tty;
-    
-    static bool local_loopback_enabled;
-        
 };
 
 #endif
