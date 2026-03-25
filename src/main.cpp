@@ -1,6 +1,7 @@
 // system includes
 #include <Arduino.h>
 #include <ESP8266WiFi.h>
+#include <TaskScheduler.h>
 // esp-idf includes
 
 // local includes
@@ -19,6 +20,30 @@ WiFiClient client;
 Teletype* tty;
 SerialHandler* serial_handler;
 StreamManager streamManager;
+Scheduler runner;
+
+void streamTaskCallback() {
+    // Handle Serial input
+    if (Serial.available()) {
+        char c = Serial.read();
+        streamManager.publish(c);
+    }
+
+    // Handle WiFi input
+    if (client && client.available()) {
+        char c = client.read();
+        streamManager.publish(c);
+    }
+
+    // Handle Teletype input
+    char tty_char = tty->read_tx_bits_from_tty();
+    if (tty_char != '\0') {
+        streamManager.publish(tty_char);
+    }
+}
+
+Task streamTask(1, TASK_FOREVER, &streamTaskCallback, &runner, true);          // 1ms interval, forever, callback, scheduler, enable
+Task uartRxTask(2, TASK_FOREVER, SerialHandler::uart_task_rx, &runner, true);  // 2ms interval, forever, callback, scheduler, enable
 
 void setup() {
     Serial.begin(115200);
@@ -36,11 +61,11 @@ void setup() {
     Serial.printf("ESP8266 Teletype Multi-Source\n");
 
     tty = new Teletype(50, RX_PIN, TX_PIN, 68);
-    serial_handler = new SerialHandler(tty);
+    serial_handler = new SerialHandler();
 
     // Subscribe outputs to the stream
     streamManager.subscribe([](char c) { Serial.write(c); });
-    streamManager.subscribe([](char c) { serial_handler->sendToTTY(c); });
+    streamManager.subscribe([](char c) { tty->print_ascii_character_to_tty(c); });
     streamManager.subscribe([](char c) {
         if (client && client.connected()) {
             client.write(c);
@@ -51,29 +76,10 @@ void setup() {
 void loop() {
     // Check for new WiFi client
     if (!client || !client.connected()) {
-        client = server.available();
+        client = server.accept();
         if (client) {
             Serial.println("New client connected");
         }
     }
-
-    // Handle Serial input
-    if (Serial.available()) {
-        char c = Serial.read();
-        streamManager.publish(c);
-    }
-
-    // Handle WiFi input
-    if (client && client.available()) {
-        char c = client.read();
-        streamManager.publish(c);
-    }
-
-    // Handle Teletype input
-    char tty_char = tty->rx_bits_from_tty();
-    if (tty_char != '\0') {
-        streamManager.publish(tty_char);
-    }
-
-    delay(1);
+    runner.execute();
 }

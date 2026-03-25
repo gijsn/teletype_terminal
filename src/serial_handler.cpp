@@ -7,15 +7,10 @@ namespace {
 constexpr const char TAG[] = "SERIAL";
 }  // namespace
 
+SerialHandler::SerialHandler() {
+}
 // static members
 bool SerialHandler::flush_buffer{};
-Teletype* SerialHandler::tty{};
-
-SerialHandler::SerialHandler(Teletype* tty) {
-    if (tty != nullptr) {
-        this->tty = tty;
-    }
-}
 
 void SerialHandler::uart_task_rx() {
     // Removed Serial reading, now handled in main loop
@@ -25,14 +20,6 @@ void SerialHandler::uart_task_rx() {
         Serial.flush();
         flush_buffer = false;
     }
-}
-
-void SerialHandler::sendToTTY(char buf) {
-    tty->print_ascii_character(buf);
-    if (buf == '\n') {
-        tty->print_ascii_character('\r');
-    }
-}
 }
 
 void SerialHandler::uart_task_tx(char buf) {

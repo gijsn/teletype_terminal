@@ -29,9 +29,8 @@ class Teletype {
 
     // Teletype printing functions
     void decide_on_crnl(std::string str);
-    void print_ascii_character(char c);
+    void print_ascii_character_to_tty(char c);
     void print_all_characters();  // for later use when we want to test the alphabet (print everything)
-
     // Conversions
     print_baudot_char_t convert_ascii_character_to_baudot(char c);
     char convert_baudot_char_to_ascii(uint8_t bits);
@@ -41,7 +40,7 @@ class Teletype {
     uint8_t get_TTY_MAX_CHARS_PAPER();
     uint8_t get_TTY_RX_PIN();
     uint8_t get_TTY_TX_PIN();
-    uint8_t rx_bits_from_tty();
+    uint8_t read_tx_bits_from_tty();
 
    private:
     // Teletype properties (timing etc.)

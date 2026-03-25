@@ -32,8 +32,8 @@ Teletype::Teletype(uint8_t baudrate, uint8_t rx_pin, uint8_t tx_pin, uint8_t max
     delay(DELAY_BIT * 5);
 
     // initialize with CR + LF
-    print_ascii_character('\r');
-    print_ascii_character('\n');
+    print_ascii_character_to_tty('\r');
+    print_ascii_character_to_tty('\n');
     characters_on_paper = 0;
     attachInterrupt(digitalPinToInterrupt(TTY_TX_PIN), tx_from_tty, RISING);
 }
@@ -81,11 +81,12 @@ void Teletype::tx_bits_to_tty(uint8_t bits) {
     delayMicroseconds(DELAY_STOPBIT * 1000);
 }
 
+// runs on interrupt of pin, maybe start the task instead.
 static void tx_from_tty() {
     tty_rx = true;
 }
 
-uint8_t Teletype::rx_bits_from_tty() {
+uint8_t Teletype::read_tx_bits_from_tty() {
     // disable interrupt
     if (!tty_rx) {
         return '\0';
@@ -114,7 +115,7 @@ uint8_t Teletype::rx_bits_from_tty() {
     return ret;
 }
 
-void Teletype::print_ascii_character(char c) {
+void Teletype::print_ascii_character_to_tty(char c) {
     print_to_tty(convert_ascii_character_to_baudot(c));  // TODO: error checking (need to decide how)
 }
 

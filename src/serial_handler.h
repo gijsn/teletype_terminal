@@ -6,11 +6,10 @@
 #include <mutex>
 #include <thread>
 // local includes
-#include "teletype.h"
 
 class SerialHandler {
    public:
-    SerialHandler(Teletype* tty);
+    SerialHandler(void);
 
     [[noreturn]] static void uart_task_rx();
     static void uart_task_tx(char buf);
@@ -22,7 +21,6 @@ class SerialHandler {
 
    private:
     static bool flush_buffer;
-    static Teletype* tty;
 };
 
 #endif
