@@ -1,10 +1,12 @@
 
 // system includes
+// clang-format off
 #include <driver/uart.h>
 #include <esp_log.h>
 #include <freertos/FreeRTOS.h>
-#include <freertos/queue.h>
 #include <freertos/task.h>
+#include <freertos/queue.h>
+//clang-format on
 
 #include <cstring>
 
@@ -53,7 +55,7 @@ void SerialHandler::uart_rx_task() {
             return;
         }
         uart_event_t event;
-        if (xQueueReceive(uart_queue, (void*)&event, pdMS_TO_TICKS(10))) {
+        if (xQueueReceive(uart_queue, &event, pdMS_TO_TICKS(10))) {
             switch (event.type) {
                 case UART_DATA: {
                     int len = uart_read_bytes(UART_NUM_0, data, event.size > (BUF_SIZE - data_len) ? (BUF_SIZE - data_len) : event.size, pdMS_TO_TICKS(10));

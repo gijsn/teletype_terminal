@@ -2,6 +2,8 @@
 #define __TELETYPE_H__
 
 // system includes
+#include <gpio.h>
+
 #include <string>
 
 // local includes
@@ -50,8 +52,8 @@ class Teletype {
     uint8_t TTY_MAX_CHARS_PAPER{};
 
     // Hardware connections
-    uint8_t TTY_RX_PIN{};
-    uint8_t TTY_TX_PIN{};
+    gpio_num_t TTY_RX_PIN;
+    gpio_num_t TTY_TX_PIN;
 
     // State variables
     tty_mode_t kb_mode{};  // keyboard mode

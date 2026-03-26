@@ -1,5 +1,4 @@
 // system includes
-#include <esp_common.h>
 #include <esp_log.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
@@ -32,22 +31,28 @@ Teletype::Teletype(uint8_t baudrate, uint8_t rx_pin, uint8_t tx_pin, uint8_t max
 
     DELAY_STOPBIT = DELAY_BIT * 1.5;
     TTY_MAX_CHARS_PAPER = max_chars;
-    TTY_RX_PIN = rx_pin;
-    TTY_TX_PIN = tx_pin;
+    TTY_RX_PIN = static_cast<gpio_num_t>(rx_pin);
+    TTY_TX_PIN = static_cast<gpio_num_t>(tx_pin);
 
     // Configure GPIO pins
     // Set RX pin as output
-    PIN_FUNC_SELECT(PERIPHS_IO_MUX_GPIO2_U, FUNC_GPIO2);
-    GPIO_DIS_OUTPUT(TTY_RX_PIN);
-    gpio_output_set(0, (1 << TTY_RX_PIN), (1 << TTY_RX_PIN), 0);
-
-    // Set TX pin as input with pull-up
-    PIN_FUNC_SELECT(PERIPHS_IO_MUX_GPIO5_U, FUNC_GPIO5);
-    GPIO_DIS_OUTPUT(TTY_TX_PIN);
-    GPIO_REG_WRITE(GPIO_PIN_ADDR(GPIO_ID_PIN(TTY_TX_PIN)), GPIO_REG_READ(GPIO_PIN_ADDR(GPIO_ID_PIN(TTY_TX_PIN))) | GPIO_PIN_PAD_DRIVER_SET(GPIO_PAD_DRIVER_ENABLE));
-
-    // Set RX high initially
-    gpio_output_set((1 << TTY_RX_PIN), 0, (1 << TTY_RX_PIN), 0);
+    gpio_config_t io_conf = {
+        .pin_bit_mask = (uint32_t)(1ULL << TTY_TX_PIN),
+        .mode = GPIO_MODE_OUTPUT,
+        .pull_up_en = GPIO_PULLUP_DISABLE,
+        .pull_down_en = GPIO_PULLDOWN_DISABLE,
+        .intr_type = GPIO_INTR_DISABLE,
+    };
+    gpio_config(&io_conf);
+    gpio_set_level(TTY_TX_PIN, 1);       // Set RX high initially
+    io_conf = {
+        .pin_bit_mask = (uint32_t)(1ULL << TTY_RX_PIN),
+        .mode = GPIO_MODE_INPUT,
+        .pull_up_en = GPIO_PULLUP_ENABLE,
+        .pull_down_en = GPIO_PULLDOWN_DISABLE,
+        .intr_type = GPIO_INTR_NEGEDGE,  // Enable interrupt for RX pin
+    };
+    gpio_config(&io_conf);
 
     kb_mode = MODE_UNKNOWN;
     pr_mode = MODE_UNKNOWN;
@@ -61,8 +66,7 @@ Teletype::Teletype(uint8_t baudrate, uint8_t rx_pin, uint8_t tx_pin, uint8_t max
     characters_on_paper = 0;
 
     // Set up GPIO interrupt for TX pin (rising edge)
-    gpio_intr_handler_register(gpio_isr_handler, nullptr);
-    gpio_pin_intr_state_set(GPIO_ID_PIN(TTY_TX_PIN), GPIO_PIN_INTR_POSEDGE);
+    gpio_isr_handler_add(TTY_RX_PIN, gpio_isr_handler, nullptr);
 
     ESP_LOGI(TAG, "Teletype initialized on RX=%d TX=%d, baudrate=%d", TTY_RX_PIN, TTY_TX_PIN, TTY_BAUDRATE);
 }
@@ -96,31 +100,26 @@ void Teletype::tx_bits_to_tty(uint8_t bits) {
     // Disable interrupts while transmitting
     taskENTER_CRITICAL();
 
-    // startbit
-    gpio_output_set(0, (1 << TTY_RX_PIN), (1 << TTY_RX_PIN), 0);
+    // startbit, TODO: check polarity
+    gpio_set_level(TTY_RX_PIN, 0);  // Start bit is LOW
     ets_delay_us(DELAY_BIT * 1000);
 
     for (int i = 0; i < NUMBER_OF_BITS; i++) {
         tx_bit = (bits & (1 << i));
         if (tx_bit) {
-            gpio_output_set((1 << TTY_RX_PIN), 0, (1 << TTY_RX_PIN), 0);
+            gpio_set_level(TTY_TX_PIN, 1);
         } else {
-            gpio_output_set(0, (1 << TTY_RX_PIN), (1 << TTY_RX_PIN), 0);
+            gpio_set_level(TTY_TX_PIN, 0);
         }
         ets_delay_us(DELAY_BIT * 1000);
     }
 
     // Stopbit
-    gpio_output_set((1 << TTY_RX_PIN), 0, (1 << TTY_RX_PIN), 0);
+    gpio_set_level(TTY_RX_PIN, 1);
     ets_delay_us(DELAY_STOPBIT * 1000);
 
     // Re-enable interrupts
     taskEXIT_CRITICAL();
-}
-
-// ISR routine
-static void IRAM_ATTR rx_from_tty() {
-    tty_rx = true;
 }
 
 uint8_t Teletype::read_rx_bits_tty() {
@@ -129,18 +128,18 @@ uint8_t Teletype::read_rx_bits_tty() {
     }
 
     // disable interrupt
-    gpio_pin_intr_state_set(GPIO_ID_PIN(TTY_TX_PIN), GPIO_PIN_INTR_DISABLE);
+    gpio_isr_handler_remove(TTY_RX_PIN);
 
     uint8_t result{0};
 
     // Wait till we are in the middle of Startbit
-    ets_delay_us(DELAY_BIT * 500);
-    if (GPIO_INPUT_GET(TTY_TX_PIN) == 1) {
+    vTaskDelay(pdMS_TO_TICKS(DELAY_BIT * 500));
+    if (gpio_get_level(TTY_RX_PIN) == 1) {
         for (int i = 0; i < 5; i++) {
-            ets_delay_us(DELAY_BIT * 1000);
-            result += ((1 - GPIO_INPUT_GET(TTY_TX_PIN)) << i);
+            vTaskDelay(pdMS_TO_TICKS(DELAY_BIT * 1000));
+            result += ((1 - gpio_get_level(TTY_TX_PIN)) << i);
         }
-        ets_delay_us(DELAY_BIT * 3000);
+        vTaskDelay(pdMS_TO_TICKS(DELAY_BIT * 1500));
     } else {
         ESP_LOGE(TAG, "ERROR! Start bit not 0! False trigger?");
     }
@@ -148,7 +147,7 @@ uint8_t Teletype::read_rx_bits_tty() {
     char ret = static_cast<char>(tolower(convert_baudot_char_to_ascii(result)));
 
     // re-enable the interrupt
-    gpio_pin_intr_state_set(GPIO_ID_PIN(TTY_TX_PIN), GPIO_PIN_INTR_POSEDGE);
+    gpio_isr_handler_add(TTY_RX_PIN, gpio_isr_handler, nullptr);
     tty_rx = false;                                      // Reset flag after processing
     return ret;
 }
