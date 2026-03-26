@@ -40,7 +40,7 @@ class Teletype {
     uint8_t get_TTY_MAX_CHARS_PAPER();
     uint8_t get_TTY_RX_PIN();
     uint8_t get_TTY_TX_PIN();
-    uint8_t read_tx_bits_from_tty();
+    uint8_t read_rx_bits_tty();
 
    private:
     // Teletype properties (timing etc.)
@@ -60,8 +60,8 @@ class Teletype {
 
     void tx_bits_to_tty(uint8_t bits);
 
-    void set_number();
-    void set_letter();
+    void shift_to_numbers();
+    void shift_to_letters();
     void set_mode(tty_mode_t mode);
 
     void print_to_tty(print_baudot_char_t bd_char);

@@ -2,18 +2,17 @@
 #define __SERIAL_HANDLER_H__
 
 // system includes
-#include <memory>
-#include <mutex>
-#include <thread>
-// local includes
+#include <cstddef>
+#include <cstdint>
 
 class SerialHandler {
    public:
     SerialHandler(void);
 
-    [[noreturn]] static void uart_task_rx();
-    static void uart_task_tx(char buf);
+    static void uart_rx_task();
+    static void uart_tx(char buf);
     static void sendToTTY(char buf);
+    static int uart_read(uint8_t* data);
 
     static void local_loop_enable();
     static void local_loop_disable();

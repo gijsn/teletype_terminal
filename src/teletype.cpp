@@ -1,5 +1,12 @@
 // system includes
-#include <Arduino.h>
+#include <esp_common.h>
+#include <esp_log.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/task.h>
+#include <gpio.h>
+#include <rom/ets_sys.h>
+
+#include <cstring>
 
 // local includes
 #include "teletype.h"
@@ -9,9 +16,16 @@ constexpr const char TAG[] = "TTY";
 }  // namespace
 
 static bool tty_rx = false;
-static void tx_from_tty();
+static Teletype* teletype_instance = nullptr;
+
+static void IRAM_ATTR gpio_isr_handler(void* arg) {
+    tty_rx = true;
+}
 
 Teletype::Teletype(uint8_t baudrate, uint8_t rx_pin, uint8_t tx_pin, uint8_t max_chars) {
+    // Store instance for ISR
+    teletype_instance = this;
+
     // initialize teletype values (baudrate etc)
     TTY_BAUDRATE = baudrate;
     DELAY_BIT = (1000 / TTY_BAUDRATE);  // in milliseconds
@@ -21,28 +35,43 @@ Teletype::Teletype(uint8_t baudrate, uint8_t rx_pin, uint8_t tx_pin, uint8_t max
     TTY_RX_PIN = rx_pin;
     TTY_TX_PIN = tx_pin;
 
-    // esp_log_level_set(TAG, ESP_LOG_WARN);
-    pinMode(TTY_RX_PIN, OUTPUT);  // RX of the Teletype
-    digitalWrite(TTY_RX_PIN, 1);
+    // Configure GPIO pins
+    // Set RX pin as output
+    PIN_FUNC_SELECT(PERIPHS_IO_MUX_GPIO2_U, FUNC_GPIO2);
+    GPIO_DIS_OUTPUT(TTY_RX_PIN);
+    gpio_output_set(0, (1 << TTY_RX_PIN), (1 << TTY_RX_PIN), 0);
+
+    // Set TX pin as input with pull-up
+    PIN_FUNC_SELECT(PERIPHS_IO_MUX_GPIO5_U, FUNC_GPIO5);
+    GPIO_DIS_OUTPUT(TTY_TX_PIN);
+    GPIO_REG_WRITE(GPIO_PIN_ADDR(GPIO_ID_PIN(TTY_TX_PIN)), GPIO_REG_READ(GPIO_PIN_ADDR(GPIO_ID_PIN(TTY_TX_PIN))) | GPIO_PIN_PAD_DRIVER_SET(GPIO_PAD_DRIVER_ENABLE));
+
+    // Set RX high initially
+    gpio_output_set((1 << TTY_RX_PIN), 0, (1 << TTY_RX_PIN), 0);
 
     kb_mode = MODE_UNKNOWN;
     pr_mode = MODE_UNKNOWN;
-    delay(DELAY_BIT * 5);
-    set_letter();
-    delay(DELAY_BIT * 5);
+    vTaskDelay(pdMS_TO_TICKS(DELAY_BIT * 5));
+    shift_to_letters();
+    vTaskDelay(pdMS_TO_TICKS(DELAY_BIT * 5));
 
     // initialize with CR + LF
     print_ascii_character_to_tty('\r');
     print_ascii_character_to_tty('\n');
     characters_on_paper = 0;
-    attachInterrupt(digitalPinToInterrupt(TTY_TX_PIN), tx_from_tty, RISING);
+
+    // Set up GPIO interrupt for TX pin (rising edge)
+    gpio_intr_handler_register(gpio_isr_handler, nullptr);
+    gpio_pin_intr_state_set(GPIO_ID_PIN(TTY_TX_PIN), GPIO_PIN_INTR_POSEDGE);
+
+    ESP_LOGI(TAG, "Teletype initialized on RX=%d TX=%d, baudrate=%d", TTY_RX_PIN, TTY_TX_PIN, TTY_BAUDRATE);
 }
 
-void Teletype::set_number() {
+void Teletype::shift_to_numbers() {
     set_mode(MODE_NUMBER);
 }
 
-void Teletype::set_letter() {
+void Teletype::shift_to_letters() {
     set_mode(MODE_LETTER);
 }
 
@@ -61,56 +90,65 @@ void Teletype::set_mode(tty_mode_t mode) {
 }
 
 void Teletype::tx_bits_to_tty(uint8_t bits) {
-    Serial.printf("pattern: %x\n", bits);
+    ESP_LOGI(TAG, "pattern: %x", bits);
     bool tx_bit{false};
 
-    // TODO: need to disable interrupts while writing a bit
+    // Disable interrupts while transmitting
+    taskENTER_CRITICAL();
 
     // startbit
-    digitalWrite(TTY_RX_PIN, 0);
-    delayMicroseconds(DELAY_BIT * 1000);
+    gpio_output_set(0, (1 << TTY_RX_PIN), (1 << TTY_RX_PIN), 0);
+    ets_delay_us(DELAY_BIT * 1000);
 
     for (int i = 0; i < NUMBER_OF_BITS; i++) {
         tx_bit = (bits & (1 << i));
-        digitalWrite(TTY_RX_PIN, tx_bit);
-        delayMicroseconds(DELAY_BIT * 1000);
+        if (tx_bit) {
+            gpio_output_set((1 << TTY_RX_PIN), 0, (1 << TTY_RX_PIN), 0);
+        } else {
+            gpio_output_set(0, (1 << TTY_RX_PIN), (1 << TTY_RX_PIN), 0);
+        }
+        ets_delay_us(DELAY_BIT * 1000);
     }
 
     // Stopbit
-    digitalWrite(TTY_RX_PIN, 1);
-    delayMicroseconds(DELAY_STOPBIT * 1000);
+    gpio_output_set((1 << TTY_RX_PIN), 0, (1 << TTY_RX_PIN), 0);
+    ets_delay_us(DELAY_STOPBIT * 1000);
+
+    // Re-enable interrupts
+    taskEXIT_CRITICAL();
 }
 
-// runs on interrupt of pin, maybe start the task instead.
-static void tx_from_tty() {
+// ISR routine
+static void IRAM_ATTR rx_from_tty() {
     tty_rx = true;
 }
 
-uint8_t Teletype::read_tx_bits_from_tty() {
-    // disable interrupt
+uint8_t Teletype::read_rx_bits_tty() {
     if (!tty_rx) {
         return '\0';
     }
 
-    detachInterrupt(digitalPinToInterrupt(TTY_TX_PIN));
-    // TODO add char to buffer
-    uint8_t result{0};
-    // Serial.printf("Hello from the RX Bits");
-    // Wait till we are in the middle of Startbit
-    delayMicroseconds(DELAY_BIT * 500);
-    if (digitalRead(TTY_TX_PIN) == 1) {
-        for (int i = 0; i < 5; i++) {
-            delayMicroseconds(DELAY_BIT * 1000);
-            result += ((1 - digitalRead(TTY_TX_PIN)) << i);
-        }
-        delayMicroseconds(DELAY_BIT * 3000);
-    } else {
-        Serial.printf("ERROR! Start bit not 0! False trigger?\r\n");
-    }
-    char ret = static_cast<char>(tolower(convert_baudot_char_to_ascii(result)));
-    // TODO: erro checking (need to decide how)                                                         // re-enable the interrupt
+    // disable interrupt
+    gpio_pin_intr_state_set(GPIO_ID_PIN(TTY_TX_PIN), GPIO_PIN_INTR_DISABLE);
 
-    attachInterrupt(digitalPinToInterrupt(TTY_TX_PIN), tx_from_tty, RISING);
+    uint8_t result{0};
+
+    // Wait till we are in the middle of Startbit
+    ets_delay_us(DELAY_BIT * 500);
+    if (GPIO_INPUT_GET(TTY_TX_PIN) == 1) {
+        for (int i = 0; i < 5; i++) {
+            ets_delay_us(DELAY_BIT * 1000);
+            result += ((1 - GPIO_INPUT_GET(TTY_TX_PIN)) << i);
+        }
+        ets_delay_us(DELAY_BIT * 3000);
+    } else {
+        ESP_LOGE(TAG, "ERROR! Start bit not 0! False trigger?");
+    }
+
+    char ret = static_cast<char>(tolower(convert_baudot_char_to_ascii(result)));
+
+    // re-enable the interrupt
+    gpio_pin_intr_state_set(GPIO_ID_PIN(TTY_TX_PIN), GPIO_PIN_INTR_POSEDGE);
     tty_rx = false;                                      // Reset flag after processing
     return ret;
 }
@@ -128,7 +166,7 @@ void Teletype::print_to_tty(print_baudot_char_t bd_char) {
         case INCREMENT_CHAR_COUNT:
             characters_on_paper++;
             if (characters_on_paper > TTY_MAX_CHARS_PAPER) {
-                Serial.printf("ERROR: maximum characters on paper exceeded, printing newline\r\n");
+                ESP_LOGE(TAG, "ERROR: maximum characters on paper exceeded, printing newline");
                 // this->decide_on_crnl("\r\n");
                 tx_bits_to_tty(convert_ascii_character_to_baudot('\r').bitcode);
                 tx_bits_to_tty(convert_ascii_character_to_baudot('\n').bitcode);
@@ -184,10 +222,10 @@ print_baudot_char_t Teletype::convert_ascii_character_to_baudot(char c) {
 
     bool found{false};
 
-    Serial.printf("CHAR = '%c'", c);
+    ESP_LOGD(TAG, "CHAR = '%c'", c);
 
     if (c == ASCII_ETX) {
-        Serial.printf("Char was ctrl + c: not printing this one to paper\r\n");
+        ESP_LOGD(TAG, "Char was ctrl + c: not printing this one to paper");
         found = true;
     }
 
@@ -196,7 +234,7 @@ print_baudot_char_t Teletype::convert_ascii_character_to_baudot(char c) {
             bd_char.bitcode = baudot_alphabet[i].bitcode;
             bd_char.mode = MODE_LETTER;
             found = true;
-            Serial.printf("LETTER %c", baudot_alphabet[i].mode_letter);
+            ESP_LOGD(TAG, "LETTER %c", baudot_alphabet[i].mode_letter);
         }
 
         if (baudot_alphabet[i].mode_number == c) {
@@ -209,7 +247,7 @@ print_baudot_char_t Teletype::convert_ascii_character_to_baudot(char c) {
                 bd_char.mode = MODE_NUMBER;
             }
             found = true;
-            Serial.printf("NUMBER %c", baudot_alphabet[i].mode_number);
+            ESP_LOGD(TAG, "NUMBER %c", baudot_alphabet[i].mode_number);
         }
         if (found) {
             bd_char.cc_action = baudot_alphabet[i].cc_action;
@@ -217,12 +255,12 @@ print_baudot_char_t Teletype::convert_ascii_character_to_baudot(char c) {
     }
 
     if (!found) {
-        Serial.printf("letter not found in alphabet, printing nothing (0x00)\r\n");
+        ESP_LOGD(TAG, "letter not found in alphabet, printing nothing (0x00)");
         // bd_char = this->convert_ascii_character_to_baudot(' '); // TODO: avoid unneccesary mode change when printing space
         bd_char.mode = MODE_BOTH_POSSIBLE;
     }
 
-    Serial.printf("BITCODE = '%x'", bd_char.bitcode);
+    ESP_LOGD(TAG, "BITCODE = '%x'", bd_char.bitcode);
     return bd_char;
 }
 
@@ -252,7 +290,7 @@ char Teletype::convert_baudot_char_to_ascii(uint8_t bits) {
                             found = true;
                             break;
                         default:
-                            Serial.printf("ERROR: state unknown, returning 0");
+                            ESP_LOGE(TAG, "ERROR: state unknown, returning 0");
                     }
                 }
             }
@@ -260,7 +298,7 @@ char Teletype::convert_baudot_char_to_ascii(uint8_t bits) {
     }
 
     if (ret == ASCII_ETX) {
-        Serial.printf("CTRL + C pressed");
+        ESP_LOGI(TAG, "CTRL + C pressed");
     }
     return ret;
 }
@@ -272,14 +310,14 @@ void Teletype::print_all_characters() {
         bd_char.bitcode = i.bitcode;
         bd_char.mode = MODE_LETTER;
         print_to_tty(bd_char);
-        delay(DELAY_STOPBIT);
+        vTaskDelay(pdMS_TO_TICKS(DELAY_STOPBIT));
     }
 
     for (auto& i : baudot_alphabet) {
         bd_char.bitcode = i.bitcode;
         bd_char.mode = MODE_NUMBER;
         print_to_tty(bd_char);
-        delay(DELAY_STOPBIT);
+        vTaskDelay(pdMS_TO_TICKS(DELAY_STOPBIT));
     }
 }
 
