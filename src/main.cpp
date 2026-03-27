@@ -11,6 +11,8 @@
 
 #include <cstring>
 
+#include "freertos/event_groups.h"
+
 // local includes
 #include "serial_handler.h"
 #include "stream_manager.h"
@@ -21,6 +23,9 @@
 #define TELNET_PORT 23
 #define MAX_CLIENTS 5
 
+#define WIFI_CONNECTED_BIT BIT0
+#define WIFI_FAIL_BIT BIT1
+
 namespace {
 constexpr const char TAG[] = "MAIN";
 }  // namespace
@@ -30,6 +35,30 @@ SerialHandler* serial_handler = nullptr;
 StreamManager streamManager;
 int telnet_socket = -1;
 int client_sockets[MAX_CLIENTS] = {-1, -1, -1, -1, -1};
+static EventGroupHandle_t s_wifi_event_group;
+static int s_retry_num = 0;
+
+static void event_handler(void* arg, esp_event_base_t event_base,
+                          int32_t event_id, void* event_data) {
+    if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_START) {
+        esp_wifi_connect();
+    } else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_DISCONNECTED) {
+        if (s_retry_num < 10) {
+            esp_wifi_connect();
+            s_retry_num++;
+            ESP_LOGI(TAG, "retry to connect to the AP");
+        } else {
+            xEventGroupSetBits(s_wifi_event_group, WIFI_FAIL_BIT);
+        }
+        ESP_LOGI(TAG, "connect to the AP fail");
+    } else if (event_base == IP_EVENT && event_id == IP_EVENT_STA_GOT_IP) {
+        ip_event_got_ip_t* event = (ip_event_got_ip_t*)event_data;
+        ESP_LOGI(TAG, "got ip:%s",
+                 ip4addr_ntoa(&event->ip_info.ip));
+        s_retry_num = 0;
+        xEventGroupSetBits(s_wifi_event_group, WIFI_CONNECTED_BIT);
+    }
+}
 
 void wifiInit() {
     esp_netif_init();
@@ -38,17 +67,23 @@ void wifiInit() {
 
     ESP_ERROR_CHECK(esp_wifi_init(&cfg));
 
+    ESP_ERROR_CHECK(esp_event_handler_register(WIFI_EVENT, ESP_EVENT_ANY_ID, &event_handler, NULL));
+    ESP_ERROR_CHECK(esp_event_handler_register(IP_EVENT, IP_EVENT_STA_GOT_IP, &event_handler, NULL));
+
     wifi_config_t wifi_config = {};
-    strcpy((char*)wifi_config.ap.ssid, "TeletypeTerminal");
-    wifi_config.ap.ssid_len = strlen("TeletypeTerminal");
-    strcpy((char*)wifi_config.ap.password, "password");
-    wifi_config.ap.max_connection = 4;
-    wifi_config.ap.authmode = WIFI_AUTH_WPA_WPA2_PSK;
+    strcpy((char*)wifi_config.sta.ssid, "Teletype");
+    strcpy((char*)wifi_config.sta.password, "teletype123");
+
+    if (strlen((char*)wifi_config.sta.password)) {
+        wifi_config.sta.threshold.authmode = WIFI_AUTH_WPA2_PSK;
+    }
 
     ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
-    ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &wifi_config));
+    ESP_ERROR_CHECK(esp_wifi_set_config(ESP_IF_WIFI_STA, &wifi_config));
     ESP_ERROR_CHECK(esp_wifi_start());
+    ESP_ERROR_CHECK(esp_wifi_set_auto_connect(true));
 
+    ESP_LOGI(TAG, "wifi_init_sta finished.");
     ESP_LOGI(TAG, "WiFi STA started");
 }
 
@@ -183,6 +218,9 @@ void app_main() {
     xTaskCreate(telnetTask, "Telnet", 4096, nullptr, 5, nullptr);
     xTaskCreate(streamTask, "Stream", 4096, nullptr, 5, nullptr);
 
+    while (true) {
+        vTaskDelay(pdMS_TO_TICKS(1000));
+    }
     // Task completed, suspend
     vTaskSuspend(nullptr);
 }
