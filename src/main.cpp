@@ -5,21 +5,23 @@
 #include <esp_system.h>
 #include <esp_wifi.h>
 #include <freertos/FreeRTOS.h>
+#include <freertos/event_groups.h>
 #include <freertos/task.h>
 #include <lwip/netdb.h>
 #include <lwip/sockets.h>
+#include <nvs.h>
+#include <nvs_flash.h>
 
 #include <cstring>
-
-#include "freertos/event_groups.h"
 
 // local includes
 #include "serial_handler.h"
 #include "stream_manager.h"
 #include "teletype.h"
 
-#define RX_PIN 2
-#define TX_PIN 5
+#define RX_PIN 5
+#define TX_PIN 2
+#define WIFI_LED
 #define TELNET_PORT 23
 #define MAX_CLIENTS 5
 
@@ -43,13 +45,13 @@ static void event_handler(void* arg, esp_event_base_t event_base,
     if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_START) {
         esp_wifi_connect();
     } else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_DISCONNECTED) {
-        if (s_retry_num < 10) {
-            esp_wifi_connect();
-            s_retry_num++;
-            ESP_LOGI(TAG, "retry to connect to the AP");
-        } else {
-            xEventGroupSetBits(s_wifi_event_group, WIFI_FAIL_BIT);
-        }
+        // if (s_retry_num < 10) {
+        //     esp_wifi_connect();
+        //     s_retry_num++;
+        //     ESP_LOGI(TAG, "retry to connect to the AP");
+        // } else {
+        //     xEventGroupSetBits(s_wifi_event_group, WIFI_FAIL_BIT);
+        // }
         ESP_LOGI(TAG, "connect to the AP fail");
     } else if (event_base == IP_EVENT && event_id == IP_EVENT_STA_GOT_IP) {
         ip_event_got_ip_t* event = (ip_event_got_ip_t*)event_data;
@@ -81,7 +83,7 @@ void wifiInit() {
     ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
     ESP_ERROR_CHECK(esp_wifi_set_config(ESP_IF_WIFI_STA, &wifi_config));
     ESP_ERROR_CHECK(esp_wifi_start());
-    ESP_ERROR_CHECK(esp_wifi_set_auto_connect(true));
+    // ESP_ERROR_CHECK(esp_wifi_set_auto_connect(true));
 
     ESP_LOGI(TAG, "wifi_init_sta finished.");
     ESP_LOGI(TAG, "WiFi STA started");
@@ -150,6 +152,7 @@ void streamTask(void* pvParameters) {
         // Handle UART (Serial) input
         if (serial_handler != nullptr) {
             int len = serial_handler->uart_read(uart_buf);
+            ESP_LOGI("STREAM", "Read %d bytes from UART", len);
             for (int i = 0; i < len; i++) {
                 streamManager.publish((char)uart_buf[i]);
             }
@@ -158,6 +161,7 @@ void streamTask(void* pvParameters) {
         // Handle Teletype input
         if (tty != nullptr) {
             char tty_char = tty->read_rx_bits_tty();
+            ESP_LOGI("STREAM", "Read char '%c' from Teletype", tty_char);
             if (tty_char != '\0') {
                 streamManager.publish(tty_char);
             }
@@ -166,6 +170,7 @@ void streamTask(void* pvParameters) {
         // Broadcast to all connected clients
         for (int i = 0; i < MAX_CLIENTS; i++) {
             if (client_sockets[i] >= 0) {
+                ESP_LOGI("STREAM", "Checking client socket %d for incoming data", i);
                 char buf[1];
                 int ret = recv(client_sockets[i], buf, 1, MSG_DONTWAIT);
                 if (ret > 0) {
@@ -181,9 +186,9 @@ void streamTask(void* pvParameters) {
     }
 }
 
-void app_main() {
+extern "C" void app_main() {
     ESP_LOGI(TAG, "Starting ESP8266 Teletype Multi-Source");
-
+    ESP_ERROR_CHECK(nvs_flash_init());
     // Initialize teletype
     tty = new Teletype(50, RX_PIN, TX_PIN, 68);
     serial_handler = new SerialHandler();
@@ -223,9 +228,4 @@ void app_main() {
     }
     // Task completed, suspend
     vTaskSuspend(nullptr);
-}
-
-extern "C" int main() {
-    app_main();
-    return 0;
 }
