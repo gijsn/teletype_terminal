@@ -47,7 +47,7 @@ SerialHandler::SerialHandler() {
     ESP_LOGI(TAG, "SerialHandler initialized at %d baud", UART_BAUD_RATE);
 }
 
-void SerialHandler::uart_rx_task() {
+void SerialHandler::uart_rx_task(void* pvParameters)  {
     // This task can be used to monitor UART events if needed
     // Currently handled in main stream task via uart_read_bytes
     while (1) {
@@ -59,7 +59,7 @@ void SerialHandler::uart_rx_task() {
         if (xQueueReceive(uart_queue, &event, pdMS_TO_TICKS(10))) {
             switch (event.type) {
                 case UART_DATA: {
-                    int len = uart_read_bytes(UART_NUM_0, data, event.size > (BUF_SIZE - data_len) ? (BUF_SIZE - data_len) : event.size, pdMS_TO_TICKS(10));
+                    int len = uart_read_bytes(UART_NUM_0, data+data_len*sizeof(uint8_t), event.size > (BUF_SIZE - data_len) ? (BUF_SIZE - data_len) : event.size, pdMS_TO_TICKS(10));
                     data_len += len;
 
                     // Process data if needed

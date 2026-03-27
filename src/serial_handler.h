@@ -9,7 +9,7 @@ class SerialHandler {
    public:
     SerialHandler(void);
 
-    static void uart_rx_task();
+    static void uart_rx_task(void* pvParameters);
     static void uart_tx(char buf);
     static void sendToTTY(char buf);
     static int uart_read(uint8_t* data);

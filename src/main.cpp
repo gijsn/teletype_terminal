@@ -14,7 +14,8 @@
 
 #include <cstring>
 
-// local includes
+// local includes 
+#include "command_handler.h"
 #include "serial_handler.h"
 #include "stream_manager.h"
 #include "teletype.h"
@@ -35,6 +36,8 @@ constexpr const char TAG[] = "MAIN";
 Teletype* tty = nullptr;
 SerialHandler* serial_handler = nullptr;
 StreamManager streamManager;
+CommandHandler* command_handler = nullptr;
+
 int telnet_socket = -1;
 int client_sockets[MAX_CLIENTS] = {-1, -1, -1, -1, -1};
 static EventGroupHandle_t s_wifi_event_group;
@@ -143,6 +146,7 @@ void telnetTask(void* pvParameters) {
                 }
             }
         }
+        vTaskDelay(pdMS_TO_TICKS(10));
     }
 }
 
@@ -152,16 +156,18 @@ void streamTask(void* pvParameters) {
         // Handle UART (Serial) input
         if (serial_handler != nullptr) {
             int len = serial_handler->uart_read(uart_buf);
-            ESP_LOGI("STREAM", "Read %d bytes from UART", len);
-            for (int i = 0; i < len; i++) {
-                streamManager.publish((char)uart_buf[i]);
+            if (len > 0) {
+                ESP_LOGI("STREAM", "Read %d bytes from UART", len);
+                for (int i = 0; i < len; i++) {
+                    streamManager.publish((char)uart_buf[i]);
+                }
             }
         }
 
         // Handle Teletype input
         if (tty != nullptr) {
             char tty_char = tty->read_rx_bits_tty();
-            ESP_LOGI("STREAM", "Read char '%c' from Teletype", tty_char);
+            // ESP_LOGI("STREAM", "Read char '%c' from Teletype", tty_char);
             if (tty_char != '\0') {
                 streamManager.publish(tty_char);
             }
@@ -170,7 +176,7 @@ void streamTask(void* pvParameters) {
         // Broadcast to all connected clients
         for (int i = 0; i < MAX_CLIENTS; i++) {
             if (client_sockets[i] >= 0) {
-                ESP_LOGI("STREAM", "Checking client socket %d for incoming data", i);
+                // ESP_LOGI("STREAM", "Checking client socket %d for incoming data", i);
                 char buf[1];
                 int ret = recv(client_sockets[i], buf, 1, MSG_DONTWAIT);
                 if (ret > 0) {
@@ -182,7 +188,7 @@ void streamTask(void* pvParameters) {
             }
         }
 
-        vTaskDelay(pdMS_TO_TICKS(1));
+        vTaskDelay(pdMS_TO_TICKS(10));
     }
 }
 
@@ -192,6 +198,7 @@ extern "C" void app_main() {
     // Initialize teletype
     tty = new Teletype(50, RX_PIN, TX_PIN, 68);
     serial_handler = new SerialHandler();
+    command_handler = new CommandHandler();
 
     // Subscribe outputs to the stream
     streamManager.subscribe([](char c) {
@@ -215,6 +222,9 @@ extern "C" void app_main() {
             tty->print_ascii_character_to_tty(c);
         }
     });
+    streamManager.subscribe([](char c) {
+        command_handler->input(c);
+    });
 
     // Initialize WiFi
     wifiInit();
@@ -222,6 +232,7 @@ extern "C" void app_main() {
     // Create tasks
     xTaskCreate(telnetTask, "Telnet", 4096, nullptr, 5, nullptr);
     xTaskCreate(streamTask, "Stream", 4096, nullptr, 5, nullptr);
+    xTaskCreate(SerialHandler::uart_rx_task, "UART_RX", 4096, nullptr, 5, nullptr);
 
     while (true) {
         vTaskDelay(pdMS_TO_TICKS(1000));
