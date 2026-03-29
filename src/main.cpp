@@ -14,7 +14,7 @@
 
 #include <cstring>
 
-// local includes 
+// local includes
 #include "command_handler.h"
 #include "serial_handler.h"
 #include "stream_manager.h"
@@ -170,6 +170,12 @@ void streamTask(void* pvParameters) {
             // ESP_LOGI("STREAM", "Read char '%c' from Teletype", tty_char);
             if (tty_char != '\0') {
                 streamManager.publish(tty_char);
+            }
+        }
+        if (command_handler != nullptr) {
+            char response = command_handler->read_response();
+            if (response != '\0') {
+                streamManager.publish(response);
             }
         }
 
