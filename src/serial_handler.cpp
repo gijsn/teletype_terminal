@@ -13,15 +13,16 @@
 
 // local includes
 #include "serial_handler.h"
-
+#include "stream_manager.h"
 namespace {
 constexpr const char TAG[] = "SERIAL";
 constexpr int UART_NUM = 0;  // UART0
 constexpr int UART_BAUD_RATE = 115200;
 constexpr int BUF_SIZE = 256;
-uint8_t data[BUF_SIZE];
-uint16_t data_len = 0;
 }  // namespace
+
+extern StreamManager streamManager;
+
 
 // static members
 bool SerialHandler::flush_buffer{};
@@ -52,18 +53,17 @@ void SerialHandler::uart_rx_task(void* pvParameters)  {
     // Currently handled in main stream task via uart_read_bytes
     while (1) {
         // Check for UART events
-        if (data_len >= BUF_SIZE) {
-            return;
-        }
         uart_event_t event;
         if (xQueueReceive(uart_queue, &event, pdMS_TO_TICKS(10))) {
             switch (event.type) {
                 case UART_DATA: {
-                    int len = uart_read_bytes(UART_NUM_0, data+data_len*sizeof(uint8_t), event.size > (BUF_SIZE - data_len) ? (BUF_SIZE - data_len) : event.size, pdMS_TO_TICKS(10));
-                    data_len += len;
+                    // TODO: read only one byte at a time, then clean for non-baudot characters
+                    uint8_t data;
+                    int len = uart_read_bytes(UART_NUM_0, &data, 1,pdMS_TO_TICKS(10));
 
                     // Process data if needed
-                    ESP_LOGD(TAG, "UART data received: %d bytes", len);
+                    ESP_LOGI(TAG, "UART data received: %d bytes of %d", len,event.size);
+                    streamManager.publish((char)data);
                     break;
                 }
                 case UART_FIFO_OVF:
@@ -84,20 +84,8 @@ void SerialHandler::uart_rx_task(void* pvParameters)  {
             flush_buffer = false;
             ESP_LOGI(TAG, "UART buffer flushed");
         }
-
         vTaskDelay(pdMS_TO_TICKS(10));
     }
-}
-
-int SerialHandler::uart_read(uint8_t* tmp_data) {
-    if (data == nullptr || data_len == 0) {
-        return 0;
-    }
-
-    strcpy((char*)tmp_data, (char*)data);
-    uint16_t tmp_data_len = data_len;
-    data_len = 0;  // Clear buffer after reading
-    return tmp_data_len;
 }
 void SerialHandler::uart_tx(char buf) {
     if (buf == '\0') {

@@ -8,22 +8,20 @@
 #include <cstring>
 
 // local includes
+#include "stream_manager.h"
 #include "teletype.h"
-
 namespace {
 constexpr const char TAG[] = "TTY";
 }  // namespace
 
 static bool tty_rx = false;
-static Teletype* teletype_instance = nullptr;
-
+extern StreamManager stream_manager;
 static void IRAM_ATTR gpio_isr_handler(void* arg) {
     tty_rx = true;
 }
 
 Teletype::Teletype(uint8_t baudrate, uint8_t rx_pin, uint8_t tx_pin, uint8_t max_chars) {
     // Store instance for ISR
-    teletype_instance = this;
 
     // initialize teletype values (baudrate etc)
     TTY_BAUDRATE = baudrate;
@@ -145,7 +143,7 @@ uint8_t Teletype::read_rx_bits_tty() {
     }
 
     char ret = static_cast<char>(tolower(convert_baudot_char_to_ascii(result)));
-
+    stream_manager.publish(ret);
     // re-enable the interrupt
     gpio_isr_handler_add(TTY_RX_PIN, gpio_isr_handler, nullptr);
     tty_rx = false;                                      // Reset flag after processing

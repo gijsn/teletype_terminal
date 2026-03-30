@@ -26,8 +26,36 @@
 #define TELNET_PORT 23
 #define MAX_CLIENTS 5
 
-#define WIFI_CONNECTED_BIT BIT0
-#define WIFI_FAIL_BIT BIT1
+#define WIFI_CONNECTING_BIT BIT0
+#define WIFI_CONNECTED_BIT BIT1
+#define WIFI_FAIL_BIT BIT2
+
+/*
+
+
+ESP WiFi - telnet controller for teletypes Siemens t100, 45.45 baud
+
+The stream manager takes care of inputs and outputs to other modules
+they can subscribe and publish to the stream manager, which then pushes data using the task to specific functions
+
+                            +--------+
+                            |  WiFi  |
+                            +--------+
+                                 ^
+                                 |
+                                 v
+        +----------+         +-------+         +-------+
+        |  serial  | <-----> |  ESP  | <-----> |  TTY  |
+        +----------+         +-------+         +-------+
+                                 ^
+                                 |
+                                 v
+                             +-------+
+                             |  CMD  |
+                             +-------+
+
+
+*/
 
 namespace {
 constexpr const char TAG[] = "MAIN";
@@ -47,25 +75,31 @@ static void event_handler(void* arg, esp_event_base_t event_base,
                           int32_t event_id, void* event_data) {
     if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_START) {
         esp_wifi_connect();
+        xEventGroupClearBits(s_wifi_event_group, WIFI_CONNECTED_BIT);
+        xEventGroupClearBits(s_wifi_event_group, WIFI_FAIL_BIT);
+        xEventGroupSetBits(s_wifi_event_group, WIFI_CONNECTING_BIT);
     } else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_DISCONNECTED) {
-        // if (s_retry_num < 10) {
-        //     esp_wifi_connect();
-        //     s_retry_num++;
-        //     ESP_LOGI(TAG, "retry to connect to the AP");
-        // } else {
-        //     xEventGroupSetBits(s_wifi_event_group, WIFI_FAIL_BIT);
-        // }
-        ESP_LOGI(TAG, "connect to the AP fail");
+        if (s_retry_num < 10) {
+            esp_wifi_connect();
+            s_retry_num++;
+            ESP_LOGD(TAG, "retry to connect to the AP");
+        } else {
+            xEventGroupSetBits(s_wifi_event_group, WIFI_FAIL_BIT);
+            ESP_LOGI(TAG, "connect to the AP fail");
+        }
+
     } else if (event_base == IP_EVENT && event_id == IP_EVENT_STA_GOT_IP) {
         ip_event_got_ip_t* event = (ip_event_got_ip_t*)event_data;
         ESP_LOGI(TAG, "got ip:%s",
                  ip4addr_ntoa(&event->ip_info.ip));
         s_retry_num = 0;
+        xEventGroupClearBits(s_wifi_event_group, WIFI_CONNECTING_BIT);
         xEventGroupSetBits(s_wifi_event_group, WIFI_CONNECTED_BIT);
     }
 }
 
-void wifiInit() {
+void wifiInit(void* pvParameters) {
+    s_wifi_event_group = xEventGroupCreate();
     esp_netif_init();
     ESP_ERROR_CHECK(esp_event_loop_create_default());
     wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
@@ -90,6 +124,7 @@ void wifiInit() {
 
     ESP_LOGI(TAG, "wifi_init_sta finished.");
     ESP_LOGI(TAG, "WiFi STA started");
+    vTaskDelete(nullptr);
 }
 
 void telnetTask(void* pvParameters) {
@@ -117,6 +152,19 @@ void telnetTask(void* pvParameters) {
 
     int client_count = 0;
     while (1) {
+        if (xEventGroupGetBits(s_wifi_event_group) | WIFI_CONNECTING_BIT) {
+            ESP_LOGI(TAG, ".");
+            return;
+        }
+        if (xEventGroupGetBits(s_wifi_event_group) | WIFI_CONNECTED_BIT) {
+            wifi_config_t conf;
+            esp_wifi_get_config(WIFI_IF_STA, &conf);
+
+            ESP_LOGI(TAG, "WiFi connected to %s", conf.sta.ssid);
+            xEventGroupClearBits(s_wifi_event_group, WIFI_CONNECTED_BIT);
+        } else {
+            return;
+        }
         struct sockaddr_in client_addr = {};
         socklen_t client_addr_len = sizeof(client_addr);
 
@@ -154,30 +202,30 @@ void streamTask(void* pvParameters) {
     uint8_t uart_buf[256];
     while (1) {
         // Handle UART (Serial) input
-        if (serial_handler != nullptr) {
-            int len = serial_handler->uart_read(uart_buf);
-            if (len > 0) {
-                ESP_LOGI("STREAM", "Read %d bytes from UART", len);
-                for (int i = 0; i < len; i++) {
-                    streamManager.publish((char)uart_buf[i]);
-                }
-            }
-        }
+        // if (serial_handler != nullptr) {
+        //     int len = serial_handler->uart_read(uart_buf);
+        //     if (len > 0) {
+        //         ESP_LOGI("STREAM", "Read %d bytes from UART", len);
+        //         for (int i = 0; i < len; i++) {
+        //             streamManager.publish((char)uart_buf[i]);
+        //         }
+        //     }
+        // }
 
         // Handle Teletype input
-        if (tty != nullptr) {
-            char tty_char = tty->read_rx_bits_tty();
-            // ESP_LOGI("STREAM", "Read char '%c' from Teletype", tty_char);
-            if (tty_char != '\0') {
-                streamManager.publish(tty_char);
-            }
-        }
-        if (command_handler != nullptr) {
-            char response = command_handler->read_response();
-            if (response != '\0') {
-                streamManager.publish(response);
-            }
-        }
+        // if (tty != nullptr) {
+        //     char tty_char = tty->read_rx_bits_tty();
+        //     // ESP_LOGI("STREAM", "Read char '%c' from Teletype", tty_char);
+        //     if (tty_char != '\0') {
+        //         streamManager.publish(tty_char);
+        //     }
+        // }
+        // if (command_handler != nullptr) {
+        //     char response = command_handler->read_response();
+        //     if (response != '\0') {
+        //         streamManager.publish(response);
+        //     }
+        // }
 
         // Broadcast to all connected clients
         for (int i = 0; i < MAX_CLIENTS; i++) {
@@ -232,12 +280,10 @@ extern "C" void app_main() {
         command_handler->input(c);
     });
 
-    // Initialize WiFi
-    wifiInit();
-
     // Create tasks
-    xTaskCreate(telnetTask, "Telnet", 4096, nullptr, 5, nullptr);
-    xTaskCreate(streamTask, "Stream", 4096, nullptr, 5, nullptr);
+    xTaskCreate(wifiInit, "WiFiInit", 2048, nullptr, 5, nullptr);
+    // xTaskCreate(telnetTask, "Telnet", 4096, nullptr, 5, nullptr);
+    // xTaskCreate(streamTask, "Stream", 4096, nullptr, 5, nullptr);
     xTaskCreate(SerialHandler::uart_rx_task, "UART_RX", 4096, nullptr, 5, nullptr);
 
     while (true) {
