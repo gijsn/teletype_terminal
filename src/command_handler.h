@@ -13,10 +13,11 @@ class CommandHandler {
     struct commandItem_t {
         uint8_t CmdID;
         char* funcTag;
-        void (CommandHandler::*funcAddr)();
+        void (CommandHandler::*funcAddr)(char* arg);
     };
     static const commandItem_t cmdList[];
-    void cmd_help();
+    void cmd_help(char* arg);
+    void cmd_wifi(char* arg);
     void execute_command(char* buf);
 
    public:
