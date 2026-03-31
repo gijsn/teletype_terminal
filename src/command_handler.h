@@ -18,7 +18,8 @@ class CommandHandler {
     static const commandItem_t cmdList[];
     void cmd_help(char* arg);
     void cmd_wifi(char* arg);
-    void execute_command(char* buf);
+    uint8_t execute_command(char* buf);
+    void write_response();
 
    public:
 };

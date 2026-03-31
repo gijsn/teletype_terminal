@@ -14,7 +14,13 @@ class StreamManager {
 
     void publish(char c) {
         for (auto& sub : subscribers) {
-            sub(c);
+            sub((char)tolower(c));
+        }
+    }
+
+    void publish(char* c) {
+        for (int i = 0; i < strlen(c); i++) {
+            publish(c[i]);
         }
     }
 

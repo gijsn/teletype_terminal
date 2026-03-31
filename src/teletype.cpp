@@ -92,7 +92,7 @@ void Teletype::set_mode(tty_mode_t mode) {
 }
 
 void Teletype::tx_bits_to_tty(uint8_t bits) {
-    ESP_LOGI(TAG, "pattern: %x", bits);
+    ESP_LOGD(TAG, "Write: %x", bits);
     bool tx_bit{false};
 
     // Disable interrupts while transmitting
@@ -100,7 +100,7 @@ void Teletype::tx_bits_to_tty(uint8_t bits) {
 
     // startbit, TODO: check polarity
     gpio_set_level(TTY_RX_PIN, 0);  // Start bit is LOW
-    ets_delay_us(DELAY_BIT * 1000);
+    vTaskDelay(pdMS_TO_TICKS(DELAY_BIT));
 
     for (int i = 0; i < NUMBER_OF_BITS; i++) {
         tx_bit = (bits & (1 << i));
@@ -109,12 +109,12 @@ void Teletype::tx_bits_to_tty(uint8_t bits) {
         } else {
             gpio_set_level(TTY_TX_PIN, 0);
         }
-        ets_delay_us(DELAY_BIT * 1000);
+        vTaskDelay(DELAY_BIT);
     }
 
     // Stopbit
     gpio_set_level(TTY_RX_PIN, 1);
-    ets_delay_us(DELAY_STOPBIT * 1000);
+    vTaskDelay(DELAY_STOPBIT);
 
     // Re-enable interrupts
     taskEXIT_CRITICAL();
@@ -163,7 +163,7 @@ void Teletype::print_to_tty(print_baudot_char_t bd_char) {
         case INCREMENT_CHAR_COUNT:
             characters_on_paper++;
             if (characters_on_paper > TTY_MAX_CHARS_PAPER) {
-                ESP_LOGE(TAG, "ERROR: maximum characters on paper exceeded, printing newline");
+                ESP_LOGW(TAG, "ERROR: maximum characters on paper exceeded, printing newline");
                 // this->decide_on_crnl("\r\n");
                 tx_bits_to_tty(convert_ascii_character_to_baudot('\r').bitcode);
                 tx_bits_to_tty(convert_ascii_character_to_baudot('\n').bitcode);

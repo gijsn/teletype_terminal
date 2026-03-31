@@ -21,7 +21,7 @@ constexpr int UART_BAUD_RATE = 115200;
 constexpr int BUF_SIZE = 256;
 }  // namespace
 
-extern StreamManager streamManager;
+extern StreamManager stream_manager;
 
 
 // static members
@@ -43,7 +43,7 @@ SerialHandler::SerialHandler() {
     uart_param_config(UART_NUM_0, &uart_config);
 
     // Install UART driver
-    uart_driver_install(UART_NUM_0, BUF_SIZE * 2, BUF_SIZE * 2, 20, &uart_queue, 0);
+    uart_driver_install(UART_NUM_0, BUF_SIZE * 2, BUF_SIZE * 2, 64, &uart_queue, 0);
 
     ESP_LOGI(TAG, "SerialHandler initialized at %d baud", UART_BAUD_RATE);
 }
@@ -58,12 +58,11 @@ void SerialHandler::uart_rx_task(void* pvParameters)  {
             switch (event.type) {
                 case UART_DATA: {
                     // TODO: read only one byte at a time, then clean for non-baudot characters
-                    uint8_t data;
-                    int len = uart_read_bytes(UART_NUM_0, &data, 1,pdMS_TO_TICKS(10));
-
-                    // Process data if needed
-                    ESP_LOGI(TAG, "UART data received: %d bytes of %d", len,event.size);
-                    streamManager.publish((char)data);
+                    uint8_t buf[event.size+1];
+                    int read = uart_read_bytes(UART_NUM_0, buf, event.size, 0);
+                    buf[event.size] = '\0';
+                    ESP_LOGI(TAG, "UART data received: %d bytes of %d", read,event.size);               
+                    stream_manager.publish((char*)buf);  
                     break;
                 }
                 case UART_FIFO_OVF:

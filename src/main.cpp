@@ -63,7 +63,7 @@ constexpr const char TAG[] = "MAIN";
 
 Teletype* tty = nullptr;
 SerialHandler* serial_handler = nullptr;
-StreamManager streamManager;
+StreamManager stream_manager;
 CommandHandler* command_handler = nullptr;
 
 int telnet_socket = -1;
@@ -82,16 +82,25 @@ static void event_handler(void* arg, esp_event_base_t event_base,
         if (s_retry_num < 10) {
             esp_wifi_connect();
             s_retry_num++;
-            ESP_LOGD(TAG, "retry to connect to the AP");
+            wifi_config_t conf;
+            esp_wifi_get_config(ESP_IF_WIFI_STA, &conf);
+            ESP_LOGD(TAG, "retry to connect to the AP: %s\r\n", conf.sta.ssid);
         } else {
             xEventGroupSetBits(s_wifi_event_group, WIFI_FAIL_BIT);
             ESP_LOGI(TAG, "connect to the AP fail");
+            stream_manager.publish("Disconnected from WiFi\r\n");
         }
 
     } else if (event_base == IP_EVENT && event_id == IP_EVENT_STA_GOT_IP) {
         ip_event_got_ip_t* event = (ip_event_got_ip_t*)event_data;
         ESP_LOGI(TAG, "got ip:%s",
                  ip4addr_ntoa(&event->ip_info.ip));
+        // TODO sprintf line
+        wifi_config_t conf;
+        esp_wifi_get_config(ESP_IF_WIFI_STA, &conf);
+        char* resp;
+        asprintf(&resp, "Connected to WiFi network with SSID: %s, and IP %s\r\n", conf.sta.ssid, ip4addr_ntoa(&event->ip_info.ip));
+        stream_manager.publish(resp);
         s_retry_num = 0;
         xEventGroupClearBits(s_wifi_event_group, WIFI_CONNECTING_BIT);
         xEventGroupSetBits(s_wifi_event_group, WIFI_CONNECTED_BIT);
@@ -108,17 +117,10 @@ void wifiInit(void* pvParameters) {
 
     ESP_ERROR_CHECK(esp_event_handler_register(WIFI_EVENT, ESP_EVENT_ANY_ID, &event_handler, NULL));
     ESP_ERROR_CHECK(esp_event_handler_register(IP_EVENT, IP_EVENT_STA_GOT_IP, &event_handler, NULL));
-
-    wifi_config_t wifi_config = {};
-    strcpy((char*)wifi_config.sta.ssid, "Teletype");
-    strcpy((char*)wifi_config.sta.password, "teletype123");
-
-    if (strlen((char*)wifi_config.sta.password)) {
-        wifi_config.sta.threshold.authmode = WIFI_AUTH_WPA2_PSK;
-    }
-
+    wifi_config_t conf;
+    esp_wifi_get_config(ESP_IF_WIFI_STA, &conf);
+    ESP_LOGI(TAG, "Connecting to the AP: %s, with Password %s\r\n", conf.sta.ssid, conf.sta.password);
     ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
-    ESP_ERROR_CHECK(esp_wifi_set_config(ESP_IF_WIFI_STA, &wifi_config));
     ESP_ERROR_CHECK(esp_wifi_start());
     // ESP_ERROR_CHECK(esp_wifi_set_auto_connect(true));
 
@@ -152,6 +154,7 @@ void telnetTask(void* pvParameters) {
 
     int client_count = 0;
     while (1) {
+        vTaskDelay(pdMS_TO_TICKS(10));
         if (xEventGroupGetBits(s_wifi_event_group) | WIFI_CONNECTING_BIT) {
             ESP_LOGI(TAG, ".");
             return;
@@ -194,12 +197,10 @@ void telnetTask(void* pvParameters) {
                 }
             }
         }
-        vTaskDelay(pdMS_TO_TICKS(10));
     }
 }
 
 void streamTask(void* pvParameters) {
-    uint8_t uart_buf[256];
     while (1) {
         // Handle UART (Serial) input
         // if (serial_handler != nullptr) {
@@ -234,7 +235,7 @@ void streamTask(void* pvParameters) {
                 char buf[1];
                 int ret = recv(client_sockets[i], buf, 1, MSG_DONTWAIT);
                 if (ret > 0) {
-                    streamManager.publish(buf[0]);
+                    stream_manager.publish(buf[0]);
                 } else if (ret == 0) {
                     close(client_sockets[i]);
                     client_sockets[i] = -1;
@@ -243,6 +244,14 @@ void streamTask(void* pvParameters) {
         }
 
         vTaskDelay(pdMS_TO_TICKS(10));
+    }
+}
+
+void write_header() {
+    char header[] = "   __  ____            ______    __       \r\n  /  |/  (_)__________/_  __/__ / /____ __\r\n / /|_/ / / __/ __/ _ \\/ / / -_) / -_) \\ /\r\n/_/  /_/_/\\__/_/  \\___/_/  \\__/_/\\__/_\\_\r\n   __  ____            ______    __       \r\n  /  |/  (_)__________/_  __/__ / /____ __\r\n / /|_/ / / __/ __/ _ \\/ / / -_) / -_) \\ /\r\n/_/  /_/_/\\__/_/  \\___/_/  \\__/_/\\__/_\\_\r\n";
+    // ESP_LOGI(TAG, " header);
+    for (int i = 0; i < strlen(header); i++) {
+        stream_manager.publish(header[i]);
     }
 }
 
@@ -255,14 +264,14 @@ extern "C" void app_main() {
     command_handler = new CommandHandler();
 
     // Subscribe outputs to the stream
-    streamManager.subscribe([](char c) {
+    stream_manager.subscribe([](char c) {
         // Write to UART
         if (serial_handler != nullptr) {
             serial_handler->uart_tx(c);
         }
     });
 
-    streamManager.subscribe([](char c) {
+    stream_manager.subscribe([](char c) {
         // Write to all telnet clients
         for (int i = 0; i < MAX_CLIENTS; i++) {
             if (client_sockets[i] >= 0) {
@@ -271,20 +280,24 @@ extern "C" void app_main() {
         }
     });
 
-    streamManager.subscribe([](char c) {
+    stream_manager.subscribe([](char c) {
         if (tty != nullptr) {
             tty->print_ascii_character_to_tty(c);
         }
     });
-    streamManager.subscribe([](char c) {
+    stream_manager.subscribe([](char c) {
         command_handler->input(c);
     });
 
     // Create tasks
     xTaskCreate(wifiInit, "WiFiInit", 2048, nullptr, 5, nullptr);
     // xTaskCreate(telnetTask, "Telnet", 4096, nullptr, 5, nullptr);
-    // xTaskCreate(streamTask, "Stream", 4096, nullptr, 5, nullptr);
+    xTaskCreate(streamTask, "Stream", 4096, nullptr, 5, nullptr);
     xTaskCreate(SerialHandler::uart_rx_task, "UART_RX", 4096, nullptr, 5, nullptr);
+
+    // write telex header
+    vTaskDelay(pdMS_TO_TICKS(5000));
+    // write_header();
 
     while (true) {
         vTaskDelay(pdMS_TO_TICKS(1000));
