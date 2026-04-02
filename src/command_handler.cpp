@@ -7,11 +7,13 @@
 #include <cstring>
 
 #include "stream_manager.h"
+#include "teletype.h"
 
 #define INPUT_BUF_SIZE 128
 #define RESPONSE_BUF_SIZE 1024
 
 extern StreamManager stream_manager;
+extern Teletype* tty;
 char* buf;
 char* response_buf;
 
@@ -19,7 +21,7 @@ const CommandHandler::commandItem_t CommandHandler::cmdList[] =
     {
         {0x02, "help", &CommandHandler::cmd_help},  // Help function
         {0x03, "wifi", &CommandHandler::cmd_wifi},
-        {0x04, "eol", nullptr},
+        {0x04, "baud", &CommandHandler::cmd_baudrate},
 
 };
 
@@ -75,6 +77,16 @@ void CommandHandler::cmd_wifi(char* arg) {
     ESP_ERROR_CHECK(esp_wifi_set_config(ESP_IF_WIFI_STA, &cfg));
     esp_wifi_start();
     asprintf(&response_buf, "Connecting to WiFi SSID: %s\r\n", cfg.sta.ssid);
+}
+
+void CommandHandler::cmd_baudrate(char* cmd) {
+    char* arg = strtok(NULL, " ");
+    if (arg != NULL) {
+        int baudrate = atoi(arg);
+        ESP_LOGI(TAG, "Setting baudrate to %d", baudrate);
+        tty->set_baudrate(baudrate);
+        asprintf(&response_buf, "Baudrate set to %d\r\n", baudrate);
+    }
 }
 
 uint8_t CommandHandler::execute_command(char* cmd) {

@@ -30,7 +30,7 @@ class Teletype {
     Teletype(uint8_t baudrate, uint8_t rx_pin, uint8_t tx_pin, uint8_t max_chars);
 
     // Teletype printing functions
-    void decide_on_crnl(std::string str);
+    void set_baudrate(uint8_t baudrate);
     void print_ascii_character_to_tty(char c);
     void print_all_characters();  // for later use when we want to test the alphabet (print everything)
     // Conversions

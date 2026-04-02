@@ -18,6 +18,7 @@ class CommandHandler {
     static const commandItem_t cmdList[];
     void cmd_help(char* arg);
     void cmd_wifi(char* arg);
+    void cmd_baudrate(char* cmd);
     uint8_t execute_command(char* buf);
     void write_response();
 

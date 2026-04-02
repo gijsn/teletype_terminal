@@ -107,7 +107,7 @@ static void event_handler(void* arg, esp_event_base_t event_base,
     }
 }
 
-void wifiInit(void* pvParameters) {
+void wifiInit() {
     s_wifi_event_group = xEventGroupCreate();
     esp_netif_init();
     ESP_ERROR_CHECK(esp_event_loop_create_default());
@@ -126,7 +126,6 @@ void wifiInit(void* pvParameters) {
 
     ESP_LOGI(TAG, "wifi_init_sta finished.");
     ESP_LOGI(TAG, "WiFi STA started");
-    vTaskDelete(nullptr);
 }
 
 void telnetTask(void* pvParameters) {
@@ -288,11 +287,10 @@ extern "C" void app_main() {
     stream_manager.subscribe([](char c) {
         command_handler->input(c);
     });
-
-    // Create tasks
-    xTaskCreate(wifiInit, "WiFiInit", 2048, nullptr, 5, nullptr);
-    // xTaskCreate(telnetTask, "Telnet", 4096, nullptr, 5, nullptr);
-    xTaskCreate(streamTask, "Stream", 4096, nullptr, 5, nullptr);
+    // wifiInit();
+    //  Create tasks
+    //  xTaskCreate(telnetTask, "Telnet", 4096, nullptr, 5, nullptr);
+    //  xTaskCreate(streamTask, "Stream", 4096, nullptr, 5, nullptr);
     xTaskCreate(SerialHandler::uart_rx_task, "UART_RX", 4096, nullptr, 5, nullptr);
 
     // write telex header

@@ -91,8 +91,14 @@ void Teletype::set_mode(tty_mode_t mode) {
     }
 }
 
+void Teletype::set_baudrate(uint8_t baudrate) {
+    TTY_BAUDRATE = baudrate;
+    DELAY_BIT = (1000 / TTY_BAUDRATE);  // in milliseconds
+    DELAY_STOPBIT = DELAY_BIT * 1.5;
+}
+
 void Teletype::tx_bits_to_tty(uint8_t bits) {
-    ESP_LOGD(TAG, "Write: %x", bits);
+    ESP_LOGI(TAG, "Write: %x, delay %d", bits, DELAY_BIT);
     bool tx_bit{false};
 
     // Disable interrupts while transmitting
@@ -101,6 +107,7 @@ void Teletype::tx_bits_to_tty(uint8_t bits) {
     // startbit, TODO: check polarity
     gpio_set_level(TTY_RX_PIN, 0);  // Start bit is LOW
     vTaskDelay(pdMS_TO_TICKS(DELAY_BIT));
+    ESP_LOGI(TAG, "Start bit sent");
 
     for (int i = 0; i < NUMBER_OF_BITS; i++) {
         tx_bit = (bits & (1 << i));
@@ -109,13 +116,15 @@ void Teletype::tx_bits_to_tty(uint8_t bits) {
         } else {
             gpio_set_level(TTY_TX_PIN, 0);
         }
-        vTaskDelay(DELAY_BIT);
+        vTaskDelay(pdMS_TO_TICKS(DELAY_BIT));
+        ESP_LOGI(TAG, "Data bit %d sent: %d", i, tx_bit);
     }
 
     // Stopbit
     gpio_set_level(TTY_RX_PIN, 1);
-    vTaskDelay(DELAY_STOPBIT);
-
+    vTaskDelay(pdMS_TO_TICKS(DELAY_STOPBIT));
+    gpio_set_level(TTY_RX_PIN, 0);
+    ESP_LOGI(TAG, "Done write: %x", bits);
     // Re-enable interrupts
     taskEXIT_CRITICAL();
 }
