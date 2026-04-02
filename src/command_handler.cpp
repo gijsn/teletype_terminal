@@ -14,6 +14,7 @@
 
 extern StreamManager stream_manager;
 extern Teletype* tty;
+extern SemaphoreHandle_t cmd_mutex_stream;
 char* buf;
 char* response_buf;
 
@@ -22,6 +23,7 @@ const CommandHandler::commandItem_t CommandHandler::cmdList[] =
         {0x02, "help", &CommandHandler::cmd_help},  // Help function
         {0x03, "wifi", &CommandHandler::cmd_wifi},
         {0x04, "baud", &CommandHandler::cmd_baudrate},
+        {0x04, nullptr, nullptr},
 
 };
 
@@ -97,29 +99,35 @@ uint8_t CommandHandler::execute_command(char* cmd) {
     }
     uint16_t list_index = 0;
     while (cmdList[list_index].funcAddr != 0) {
-        ESP_LOGD(TAG, "checking command %s against %s", cmd_str, cmdList[list_index].funcTag);
+        ESP_LOGI(TAG, "checking command %s against %s", cmd_str, cmdList[list_index].funcTag);
         if (strcmp(cmd_str, cmdList[list_index].funcTag) == 0) {
             ESP_LOGI(TAG, ">%02X,", cmdList[list_index].CmdID);
             (this->*cmdList[list_index].funcAddr)(cmd);
             return 1;  // ready
         }
-        ESP_LOGD(TAG, "next %d", list_index);
+        ESP_LOGI(TAG, "next %d", list_index);
         list_index++;  // Next function
     }
+    ESP_LOGI(TAG, "Command not found: %s", cmd_str);
     return 0;
 }
 bool capital = false;
+bool command = false;
 void CommandHandler::input(char c) {
-    ESP_LOGD(TAG, "Received command input: '%c'", c);
+    ESP_LOGI(TAG, "Received command input: '%c'", c);
     if (c == '\n' || c == '\r') {
-        esp_log_buffer_hexdump_internal(TAG, "Command executed: '%s'", buf);
+        ESP_LOGI(TAG, "Command executed: '%s'", buf);
         // TODO: execute command in buf
-        response_buf = (char*)'\0';
         if (execute_command(buf) && strlen(response_buf) > 0) {
+            xSemaphoreTake(cmd_mutex_stream, portMAX_DELAY);
             stream_manager.publish(response_buf);
+            xSemaphoreGive(cmd_mutex_stream);
         }
+        ESP_LOGI(TAG, "Command execution finished, clearing buffer");
+        free(response_buf);
         buf[0] = '\0';  // Clear the buffer
         capital = false;
+        command = false;
     } else if (c == '+') {
         // next character is a captital
         if (capital) {
@@ -129,12 +137,17 @@ void CommandHandler::input(char c) {
             strcat(buf, c2);
         }
         capital = true;
+    } else if (c == '/') {
+        command = true;
     } else if (strlen(buf) < INPUT_BUF_SIZE - 1) {
+        if (!command) {
+            return;
+        }
         if (capital) {
             c = (char)toupper(c);
             capital = false;
         }
-        ESP_LOGD(TAG, "Appending '%c' to command buffer %s, strlen %d", c, buf, strlen(buf));
+        ESP_LOGI(TAG, "Appending '%c' to command buffer %s, strlen %d", c, buf, strlen(buf));
         const char c2[2] = {c, '\0'};  // Create a string with the character and null terminator
         strcat(buf, c2);               // Append character to buffer
     } else {

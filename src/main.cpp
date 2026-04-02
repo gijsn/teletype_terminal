@@ -66,6 +66,7 @@ SerialHandler* serial_handler = nullptr;
 StreamManager stream_manager;
 CommandHandler* command_handler = nullptr;
 
+SemaphoreHandle_t cmd_mutex_stream;
 int telnet_socket = -1;
 int client_sockets[MAX_CLIENTS] = {-1, -1, -1, -1, -1};
 static EventGroupHandle_t s_wifi_event_group;
@@ -88,7 +89,9 @@ static void event_handler(void* arg, esp_event_base_t event_base,
         } else {
             xEventGroupSetBits(s_wifi_event_group, WIFI_FAIL_BIT);
             ESP_LOGI(TAG, "connect to the AP fail");
+            xSemaphoreTake(cmd_mutex_stream, portMAX_DELAY);
             stream_manager.publish("Disconnected from WiFi\r\n");
+            xSemaphoreGive(cmd_mutex_stream);
         }
 
     } else if (event_base == IP_EVENT && event_id == IP_EVENT_STA_GOT_IP) {
@@ -100,7 +103,10 @@ static void event_handler(void* arg, esp_event_base_t event_base,
         esp_wifi_get_config(ESP_IF_WIFI_STA, &conf);
         char* resp;
         asprintf(&resp, "Connected to WiFi network with SSID: %s, and IP %s\r\n", conf.sta.ssid, ip4addr_ntoa(&event->ip_info.ip));
+        xSemaphoreTake(cmd_mutex_stream, portMAX_DELAY);
         stream_manager.publish(resp);
+        free(resp);
+        xSemaphoreGive(cmd_mutex_stream);
         s_retry_num = 0;
         xEventGroupClearBits(s_wifi_event_group, WIFI_CONNECTING_BIT);
         xEventGroupSetBits(s_wifi_event_group, WIFI_CONNECTED_BIT);
@@ -234,7 +240,9 @@ void streamTask(void* pvParameters) {
                 char buf[1];
                 int ret = recv(client_sockets[i], buf, 1, MSG_DONTWAIT);
                 if (ret > 0) {
+                    xSemaphoreTake(cmd_mutex_stream, portMAX_DELAY);
                     stream_manager.publish(buf[0]);
+                    xSemaphoreGive(cmd_mutex_stream);
                 } else if (ret == 0) {
                     close(client_sockets[i]);
                     client_sockets[i] = -1;
@@ -249,14 +257,18 @@ void streamTask(void* pvParameters) {
 void write_header() {
     char header[] = "   __  ____            ______    __       \r\n  /  |/  (_)__________/_  __/__ / /____ __\r\n / /|_/ / / __/ __/ _ \\/ / / -_) / -_) \\ /\r\n/_/  /_/_/\\__/_/  \\___/_/  \\__/_/\\__/_\\_\r\n   __  ____            ______    __       \r\n  /  |/  (_)__________/_  __/__ / /____ __\r\n / /|_/ / / __/ __/ _ \\/ / / -_) / -_) \\ /\r\n/_/  /_/_/\\__/_/  \\___/_/  \\__/_/\\__/_\\_\r\n";
     // ESP_LOGI(TAG, " header);
+    xSemaphoreTake(cmd_mutex_stream, portMAX_DELAY);
     for (int i = 0; i < strlen(header); i++) {
         stream_manager.publish(header[i]);
     }
+    xSemaphoreGive(cmd_mutex_stream);
 }
 
 extern "C" void app_main() {
     ESP_LOGI(TAG, "Starting ESP8266 Teletype Multi-Source");
     ESP_ERROR_CHECK(nvs_flash_init());
+    cmd_mutex_stream = xSemaphoreCreateMutex();
+
     // Initialize teletype
     tty = new Teletype(50, RX_PIN, TX_PIN, 68);
     serial_handler = new SerialHandler();
@@ -287,7 +299,7 @@ extern "C" void app_main() {
     stream_manager.subscribe([](char c) {
         command_handler->input(c);
     });
-    // wifiInit();
+    wifiInit();
     //  Create tasks
     //  xTaskCreate(telnetTask, "Telnet", 4096, nullptr, 5, nullptr);
     //  xTaskCreate(streamTask, "Stream", 4096, nullptr, 5, nullptr);

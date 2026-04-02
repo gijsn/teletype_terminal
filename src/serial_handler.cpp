@@ -22,7 +22,7 @@ constexpr int BUF_SIZE = 256;
 }  // namespace
 
 extern StreamManager stream_manager;
-
+extern SemaphoreHandle_t cmd_mutex_stream;
 
 // static members
 bool SerialHandler::flush_buffer{};
@@ -62,7 +62,9 @@ void SerialHandler::uart_rx_task(void* pvParameters)  {
                     int read = uart_read_bytes(UART_NUM_0, buf, event.size, 0);
                     buf[event.size] = '\0';
                     ESP_LOGI(TAG, "UART data received: %d bytes of %d", read,event.size);               
+                    xSemaphoreTake(cmd_mutex_stream, portMAX_DELAY);    
                     stream_manager.publish((char*)buf);  
+                    xSemaphoreGive(cmd_mutex_stream);
                     break;
                 }
                 case UART_FIFO_OVF:

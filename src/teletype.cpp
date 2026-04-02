@@ -8,6 +8,7 @@
 #include <cstring>
 
 // local includes
+#include "semphr.h"
 #include "stream_manager.h"
 #include "teletype.h"
 namespace {
@@ -16,6 +17,7 @@ constexpr const char TAG[] = "TTY";
 
 static bool tty_rx = false;
 extern StreamManager stream_manager;
+extern SemaphoreHandle_t cmd_mutex_stream;
 static void IRAM_ATTR gpio_isr_handler(void* arg) {
     tty_rx = true;
 }
@@ -98,13 +100,12 @@ void Teletype::set_baudrate(uint8_t baudrate) {
 }
 
 void Teletype::tx_bits_to_tty(uint8_t bits) {
-    ESP_LOGI(TAG, "Write: %x, delay %d", bits, DELAY_BIT);
+    ESP_LOGD(TAG, "Write: %x, delay %d", bits, DELAY_BIT);
     bool tx_bit{false};
 
     // Startbit, TODO: check polarity
     gpio_set_level(TTY_RX_PIN, 0);  // Start bit is LOW
     vTaskDelay(pdMS_TO_TICKS(DELAY_BIT));
-    ESP_LOGI(TAG, "Start bit sent");
 
     for (int i = 0; i < NUMBER_OF_BITS; i++) {
         tx_bit = (bits & (1 << i));
@@ -116,7 +117,7 @@ void Teletype::tx_bits_to_tty(uint8_t bits) {
     gpio_set_level(TTY_RX_PIN, 1);
     vTaskDelay(pdMS_TO_TICKS(DELAY_STOPBIT));
     gpio_set_level(TTY_RX_PIN, 0);
-    ESP_LOGI(TAG, "Done write: %x", bits);
+    ESP_LOGD(TAG, "Done write: %x", bits);
 }
 
 uint8_t Teletype::read_rx_bits_tty() {
@@ -142,7 +143,9 @@ uint8_t Teletype::read_rx_bits_tty() {
     }
 
     char ret = static_cast<char>(tolower(convert_baudot_char_to_ascii(result)));
+    xSemaphoreTake(cmd_mutex_stream, portMAX_DELAY);
     stream_manager.publish(ret);
+    xSemaphoreGive(cmd_mutex_stream);
     // re-enable the interrupt
     gpio_isr_handler_add(TTY_RX_PIN, gpio_isr_handler, nullptr);
     tty_rx = false;                                      // Reset flag after processing

@@ -4,6 +4,8 @@
 #include <functional>
 #include <vector>
 
+#include "semphr.h"
+
 class StreamManager {
    public:
     using Subscriber = std::function<void(char)>;
