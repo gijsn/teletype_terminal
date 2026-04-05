@@ -2,6 +2,8 @@
 
 #include <esp_log.h>
 #include <esp_wifi.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/task.h>
 #include <stdlib.h>
 
 #include <cstring>
@@ -33,6 +35,7 @@ constexpr const char TAG[] = "CMD";
 CommandHandler::CommandHandler() {
     ESP_LOGI(TAG, "CommandHandler initialized");
     buf = (char*)malloc(INPUT_BUF_SIZE * sizeof(char));
+    response_buf = nullptr;
     memset(buf, '\0', INPUT_BUF_SIZE);
 }
 
@@ -90,24 +93,48 @@ void CommandHandler::cmd_baudrate(char* cmd) {
     }
 }
 
-uint8_t CommandHandler::execute_command(char* arg) {
-    char* cmd_str;
-    cmd_str = strtok(arg, " ");
+void CommandHandler::execute_command_task(void* arg) {
+    CommandTaskParams* params = static_cast<CommandTaskParams*>(arg);
+    if (params == nullptr) {
+        vTaskDelete(NULL);
+        return;
+    }
+    // Check if command is empty
+    char* cmd_str = strtok(params->command, " ");
     if (cmd_str == NULL) {
-        return 0;
+        if (response_buf) {
+            free(response_buf);
+            response_buf = nullptr;
+        }
+        vTaskDelete(NULL);
+        return;
     }
     uint16_t list_index = 0;
     for (const auto& cmd : cmdList) {
-        ESP_LOGD(TAG, "checking command %s against %s", cmd_str, cmd.funcTag);
+        ESP_LOGI(TAG, "checking command %s against %s", cmd_str, cmd.funcTag);
         if (strcmp(cmd_str, cmd.funcTag) == 0) {
-            (this->*cmd.funcAddr)(arg);
-            return 1;  // ready
+            (params->handler->*cmd.funcAddr)(params->command);
+            if (response_buf && strlen(response_buf) > 0) {
+                ESP_LOGI(TAG, "Command response: %s", response_buf);
+                xSemaphoreTake(cmd_mutex_stream, portMAX_DELAY);
+                stream_manager.publish(response_buf);
+                xSemaphoreGive(cmd_mutex_stream);
+            }
+            if (response_buf) {
+                free(response_buf);
+                response_buf = nullptr;
+            }
+            vTaskDelete(NULL);
         }
-        ESP_LOGD(TAG, "next %d", list_index);
+        ESP_LOGI(TAG, "next %d", list_index);
         list_index++;  // Next function
     }
     ESP_LOGD(TAG, "Command not found: %s", cmd_str);
-    return 0;
+    if (response_buf) {
+        free(response_buf);
+        response_buf = nullptr;
+    }
+    vTaskDelete(NULL);
 }
 bool capital = false;
 bool command = false;
@@ -115,14 +142,24 @@ void CommandHandler::input(char c) {
     ESP_LOGD(TAG, "Received command input: '%c'", c);
     if (c == '\n' || c == '\r') {
         ESP_LOGD(TAG, "Command executed: '%s'", buf);
-        // TODO: execute command in buf
-        if (execute_command(buf) && strlen(response_buf) > 0) {
-            xSemaphoreTake(cmd_mutex_stream, portMAX_DELAY);
-            stream_manager.publish(response_buf);
-            xSemaphoreGive(cmd_mutex_stream);
+        char* cmd_copy = (char*)malloc(strlen(buf) + 1);
+        if (cmd_copy != nullptr) {
+            strcpy(cmd_copy, buf);
+            CommandTaskParams* params = (CommandTaskParams*)malloc(sizeof(CommandTaskParams));
+            if (params != nullptr) {
+                params->handler = this;
+                params->command = cmd_copy;
+                ESP_LOGI(TAG, "Starting command execution task for command: '%s'", cmd_copy);
+                xTaskCreate(CommandHandler::execute_command_task, "execute_command", 4096, params, 5, NULL);
+            } else {
+                free(cmd_copy);
+                ESP_LOGE(TAG, "Failed to allocate command task params");
+            }
+        } else {
+            ESP_LOGE(TAG, "Failed to allocate command buffer copy");
         }
-        ESP_LOGD(TAG, "Command execution finished, clearing buffer");
-        free(response_buf);
+        ESP_LOGD(TAG, "Command execution task started, clearing buffer");
+
         buf[0] = '\0';  // Clear the buffer
         capital = false;
         command = false;
