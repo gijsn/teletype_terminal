@@ -61,7 +61,7 @@ void SerialHandler::uart_rx_task(void* pvParameters)  {
                     uint8_t buf[event.size+1];
                     int read = uart_read_bytes(UART_NUM_0, buf, event.size, 0);
                     buf[event.size] = '\0';
-                    ESP_LOGI(TAG, "UART data received: %d bytes of %d", read,event.size);               
+                    ESP_LOGD(TAG, "UART data received: %d bytes of %d", read,event.size);               
                     xSemaphoreTake(cmd_mutex_stream, portMAX_DELAY);    
                     stream_manager.publish((char*)buf);  
                     xSemaphoreGive(cmd_mutex_stream);

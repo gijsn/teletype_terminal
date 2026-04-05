@@ -115,7 +115,7 @@ void CommandHandler::execute_command_task(void* arg) {
         if (strcmp(cmd_str, cmd.funcTag) == 0) {
             (params->handler->*cmd.funcAddr)(params->command);
             if (response_buf && strlen(response_buf) > 0) {
-                ESP_LOGI(TAG, "Command response: %s", response_buf);
+                ESP_LOGD(TAG, "Command response: %s", response_buf);
                 xSemaphoreTake(cmd_mutex_stream, portMAX_DELAY);
                 stream_manager.publish(response_buf);
                 xSemaphoreGive(cmd_mutex_stream);
@@ -126,7 +126,7 @@ void CommandHandler::execute_command_task(void* arg) {
             }
             vTaskDelete(NULL);
         }
-        ESP_LOGI(TAG, "next %d", list_index);
+        ESP_LOGD(TAG, "next %d", list_index);
         list_index++;  // Next function
     }
     ESP_LOGD(TAG, "Command not found: %s", cmd_str);
@@ -141,6 +141,9 @@ bool command = false;
 void CommandHandler::input(char c) {
     ESP_LOGD(TAG, "Received command input: '%c'", c);
     if (c == '\n' || c == '\r') {
+        if (strlen(buf) == 0) {
+            return;
+        }
         ESP_LOGD(TAG, "Command executed: '%s'", buf);
         char* cmd_copy = (char*)malloc(strlen(buf) + 1);
         if (cmd_copy != nullptr) {
@@ -149,7 +152,7 @@ void CommandHandler::input(char c) {
             if (params != nullptr) {
                 params->handler = this;
                 params->command = cmd_copy;
-                ESP_LOGI(TAG, "Starting command execution task for command: '%s'", cmd_copy);
+                ESP_LOGD(TAG, "Starting command execution task for command: '%s'", cmd_copy);
                 xTaskCreate(CommandHandler::execute_command_task, "execute_command", 4096, params, 5, NULL);
             } else {
                 free(cmd_copy);
