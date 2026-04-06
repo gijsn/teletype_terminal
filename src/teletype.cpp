@@ -1,5 +1,6 @@
 // system includes
 #include <esp_log.h>
+#include <esp_timer.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 #include <gpio.h>
@@ -15,11 +16,29 @@ namespace {
 constexpr const char TAG[] = "TTY";
 }  // namespace
 
-static bool tty_rx = false;
+static TaskHandle_t tty_rx_task_handle = nullptr;
 extern StreamManager stream_manager;
 extern SemaphoreHandle_t cmd_mutex_stream;
+
+// handle the incoming bits from the teletype, triggered by the GPIO interrupt
 static void IRAM_ATTR gpio_isr_handler(void* arg) {
-    tty_rx = true;
+    if (tty_rx_task_handle != nullptr) {
+        BaseType_t xHigherPriorityTaskWoken = pdFALSE;
+        vTaskNotifyGiveFromISR(tty_rx_task_handle, &xHigherPriorityTaskWoken);
+        if (xHigherPriorityTaskWoken != pdFALSE) {
+            portYIELD_FROM_ISR();
+        }
+    }
+}
+
+static void tty_rx_task(void* pvParameters) {
+    Teletype* self = static_cast<Teletype*>(pvParameters);
+    while (true) {
+        ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+        if (self != nullptr) {
+            self->read_rx_bits_tty();
+        }
+    }
 }
 
 Teletype::Teletype(uint8_t baudrate, uint8_t rx_pin, uint8_t tx_pin, uint8_t max_chars) {
@@ -65,7 +84,12 @@ Teletype::Teletype(uint8_t baudrate, uint8_t rx_pin, uint8_t tx_pin, uint8_t max
     print_ascii_character_to_tty('\n');
     characters_on_paper = 0;
 
-    // Set up GPIO interrupt for TX pin (rising edge)
+    if (xTaskCreate(tty_rx_task, "tty_rx", 4096, this, 5, &tty_rx_task_handle) != pdPASS) {
+        ESP_LOGE(TAG, "Failed to create TTY RX task");
+        tty_rx_task_handle = nullptr;
+    }
+
+    // Set up GPIO interrupt for RX pin (falling edge)
     gpio_isr_handler_add(TTY_RX_PIN, gpio_isr_handler, nullptr);
 
     ESP_LOGI(TAG, "Teletype initialized on RX=%d TX=%d, baudrate=%d", TTY_RX_PIN, TTY_TX_PIN, TTY_BAUDRATE);
@@ -99,6 +123,12 @@ void Teletype::set_baudrate(uint8_t baudrate) {
     DELAY_STOPBIT = DELAY_BIT * 1.5;
 }
 
+void Teletype::set_rx_polarity(bool polarity) {
+}
+
+void Teletype::set_tx_polarity(bool polarity) {
+}
+
 void Teletype::tx_bits_to_tty(uint8_t bits) {
     ESP_LOGD(TAG, "Write: %x, delay %d", bits, DELAY_BIT);
     bool tx_bit{false};
@@ -121,15 +151,16 @@ void Teletype::tx_bits_to_tty(uint8_t bits) {
 }
 
 uint8_t Teletype::read_rx_bits_tty() {
-    if (!tty_rx) {
-        return '\0';
-    }
-
-    // disable interrupt
+    // disable interrupt while sampling
     gpio_isr_handler_remove(TTY_RX_PIN);
 
     uint8_t result{0};
-
+    /*
+    Pattern:
+    Startbit (1) | bit0 | bit1 | bit2 | bit3 | bit4 | Stopbit (1.5)
+    ______        ______               _____________           ______
+          |______|      |_____________|             |_________|
+    */
     // Wait till we are in the middle of Startbit
     vTaskDelay(pdMS_TO_TICKS(DELAY_BIT * 500));
     if (gpio_get_level(TTY_RX_PIN) == 1) {
@@ -148,7 +179,7 @@ uint8_t Teletype::read_rx_bits_tty() {
     xSemaphoreGive(cmd_mutex_stream);
     // re-enable the interrupt
     gpio_isr_handler_add(TTY_RX_PIN, gpio_isr_handler, nullptr);
-    tty_rx = false;                                      // Reset flag after processing
+
     return ret;
 }
 

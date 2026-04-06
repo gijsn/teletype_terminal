@@ -30,6 +30,8 @@ class Teletype {
     Teletype(uint8_t baudrate, uint8_t rx_pin, uint8_t tx_pin, uint8_t max_chars);
 
     // Teletype printing functions
+    void set_tx_polarity(bool normal);
+    void set_rx_polarity(bool normal);
     void set_baudrate(uint8_t baudrate);
     void print_ascii_character_to_tty(char c);
     void print_all_characters();  // for later use when we want to test the alphabet (print everything)
@@ -42,7 +44,6 @@ class Teletype {
     uint8_t get_TTY_MAX_CHARS_PAPER();
     uint8_t get_TTY_RX_PIN();
     uint8_t get_TTY_TX_PIN();
-    uint8_t read_rx_bits_tty();
 
    private:
     // Teletype properties (timing etc.)
@@ -61,7 +62,7 @@ class Teletype {
     uint8_t characters_on_paper{};
 
     void tx_bits_to_tty(uint8_t bits);
-
+    uint8_t read_rx_bits_tty();
     void shift_to_numbers();
     void shift_to_letters();
     void set_mode(tty_mode_t mode);
