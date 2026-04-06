@@ -42,7 +42,7 @@ CommandHandler::CommandHandler() {
 void CommandHandler::cmd_help(char* arg) {
     asprintf(&response_buf, "Available commands:\r\n");
     for (const auto& cmd : cmdList) {
-        ESP_LOGI(TAG, "command %s\r\n", cmd.funcTag);
+        ESP_LOGI(TAG, "command %s", cmd.funcTag);
         asprintf(&response_buf, "%s->%s\r\n", response_buf, cmd.funcTag);
     }
 }
@@ -58,7 +58,9 @@ void CommandHandler::cmd_wifi(char* arg) {
     } else {
         ESP_LOGI(TAG, "Usage: \"wifi {ssid} [password]\"");
         esp_wifi_get_config(ESP_IF_WIFI_STA, &cfg);
-        asprintf(&response_buf, "Usage: \"wifi {ssid} [password]\"\r\nCurrent settings, SSID: %s, Password: %s\r\n", cfg.sta.ssid, cfg.sta.password);
+        tcpip_adapter_ip_info_t ip_info;
+        tcpip_adapter_get_ip_info(TCPIP_ADAPTER_IF_STA, &ip_info);
+        asprintf(&response_buf, "Usage: \"wifi {ssid} [password]\"\r\nCurrent settings, SSID: %s, Password: %s\r\nIs connected: %s\r\n", cfg.sta.ssid, cfg.sta.password, ip_info.ip.addr ? "Yes" : "No");
         return;
     }
 

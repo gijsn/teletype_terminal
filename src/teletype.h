@@ -52,6 +52,8 @@ class Teletype {
     uint16_t DELAY_STOPBIT{};
     uint8_t TTY_MAX_CHARS_PAPER{};
 
+    bool rx_polarity_normal{true};
+    bool tx_polarity_normal{true};
     // Hardware connections
     gpio_num_t TTY_RX_PIN;
     gpio_num_t TTY_TX_PIN;

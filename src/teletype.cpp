@@ -53,6 +53,9 @@ Teletype::Teletype(uint8_t baudrate, uint8_t rx_pin, uint8_t tx_pin, uint8_t max
     TTY_RX_PIN = static_cast<gpio_num_t>(rx_pin);
     TTY_TX_PIN = static_cast<gpio_num_t>(tx_pin);
 
+    rx_polarity_normal = true;
+    tx_polarity_normal = true;
+
     // Configure GPIO pins
     // Set RX pin as output
     gpio_config_t io_conf = {
@@ -63,13 +66,13 @@ Teletype::Teletype(uint8_t baudrate, uint8_t rx_pin, uint8_t tx_pin, uint8_t max
         .intr_type = GPIO_INTR_DISABLE,
     };
     gpio_config(&io_conf);
-    gpio_set_level(TTY_TX_PIN, 1);       // Set RX high initially
+    gpio_set_level(TTY_TX_PIN, tx_polarity_normal ^ 1);                           // Set RX high initially
     io_conf = {
         .pin_bit_mask = (uint32_t)(1ULL << TTY_RX_PIN),
         .mode = GPIO_MODE_INPUT,
         .pull_up_en = GPIO_PULLUP_ENABLE,
         .pull_down_en = GPIO_PULLDOWN_DISABLE,
-        .intr_type = GPIO_INTR_NEGEDGE,  // Enable interrupt for RX pin
+        .intr_type = rx_polarity_normal ? GPIO_INTR_NEGEDGE : GPIO_INTR_POSEDGE,  // Enable interrupt for RX pin
     };
     gpio_config(&io_conf);
 
@@ -124,9 +127,11 @@ void Teletype::set_baudrate(uint8_t baudrate) {
 }
 
 void Teletype::set_rx_polarity(bool polarity) {
+    rx_polarity_normal = polarity;
 }
 
 void Teletype::set_tx_polarity(bool polarity) {
+    tx_polarity_normal = polarity;
 }
 
 void Teletype::tx_bits_to_tty(uint8_t bits) {
@@ -134,19 +139,19 @@ void Teletype::tx_bits_to_tty(uint8_t bits) {
     bool tx_bit{false};
 
     // Startbit, TODO: check polarity
-    gpio_set_level(TTY_RX_PIN, 0);  // Start bit is LOW
+    gpio_set_level(TTY_RX_PIN, rx_polarity_normal ^ 1);  // Start bit is LOW
     vTaskDelay(pdMS_TO_TICKS(DELAY_BIT));
 
     for (int i = 0; i < NUMBER_OF_BITS; i++) {
         tx_bit = (bits & (1 << i));
-        gpio_set_level(TTY_TX_PIN, tx_bit);
+        gpio_set_level(TTY_TX_PIN, tx_polarity_normal ^ tx_bit);
         vTaskDelay(pdMS_TO_TICKS(DELAY_BIT));
     }
 
     // Stopbit
-    gpio_set_level(TTY_RX_PIN, 1);
+    gpio_set_level(TTY_RX_PIN, rx_polarity_normal ^ 0);
     vTaskDelay(pdMS_TO_TICKS(DELAY_STOPBIT));
-    gpio_set_level(TTY_RX_PIN, 0);
+    gpio_set_level(TTY_RX_PIN, rx_polarity_normal ^ 1);
     ESP_LOGD(TAG, "Done write: %x", bits);
 }
 
@@ -163,10 +168,10 @@ uint8_t Teletype::read_rx_bits_tty() {
     */
     // Wait till we are in the middle of Startbit
     vTaskDelay(pdMS_TO_TICKS(DELAY_BIT * 500));
-    if (gpio_get_level(TTY_RX_PIN) == 1) {
+    if (gpio_get_level(TTY_RX_PIN) == rx_polarity_normal) {
         for (int i = 0; i < 5; i++) {
             vTaskDelay(pdMS_TO_TICKS(DELAY_BIT * 1000));
-            result += ((1 - gpio_get_level(TTY_TX_PIN)) << i);
+            result += rx_polarity_normal ^ ((1 - gpio_get_level(TTY_TX_PIN)) << i);
         }
         vTaskDelay(pdMS_TO_TICKS(DELAY_BIT * 1500));
     } else {
