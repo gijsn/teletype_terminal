@@ -9,6 +9,7 @@
 #include <freertos/task.h>
 #include <lwip/netdb.h>
 #include <lwip/sockets.h>
+#include <mdns.h>
 #include <nvs.h>
 #include <nvs_flash.h>
 
@@ -93,6 +94,7 @@ static void event_handler(void* arg, esp_event_base_t event_base,
             xSemaphoreTake(cmd_mutex_stream, portMAX_DELAY);
             stream_manager.publish("Disconnected from WiFi\r\n");
             xSemaphoreGive(cmd_mutex_stream);
+            mdns_free();
         }
 
     } else if (event_base == IP_EVENT && event_id == IP_EVENT_STA_GOT_IP) {
@@ -111,6 +113,12 @@ static void event_handler(void* arg, esp_event_base_t event_base,
         s_retry_num = 0;
         xEventGroupClearBits(s_wifi_event_group, WIFI_CONNECTING_BIT);
         xEventGroupSetBits(s_wifi_event_group, WIFI_CONNECTED_BIT);
+
+        // Initialize mDNS
+        ESP_ERROR_CHECK(mdns_init());
+        ESP_ERROR_CHECK(mdns_hostname_set("teletype"));
+        ESP_ERROR_CHECK(mdns_service_add(NULL, "_telnet", "_tcp", TELNET_PORT, NULL, 0));
+        ESP_LOGI(TAG, "mDNS initialized: teletype.local");
     }
 }
 
