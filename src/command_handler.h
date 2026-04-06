@@ -23,6 +23,8 @@ class CommandHandler {
     void cmd_help(char* arg);
     void cmd_wifi(char* arg);
     void cmd_baudrate(char* cmd);
+    void cmd_rxpol(char* cmd);
+    void cmd_txpol(char* cmd);
     static void execute_command_task(void* arg);
     void write_response();
 

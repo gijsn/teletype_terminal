@@ -32,6 +32,8 @@ class Teletype {
     // Teletype printing functions
     void set_tx_polarity(bool normal);
     void set_rx_polarity(bool normal);
+    bool get_tx_polarity();
+    bool get_rx_polarity();
     void set_baudrate(uint8_t baudrate);
     void print_ascii_character_to_tty(char c);
     void print_all_characters();  // for later use when we want to test the alphabet (print everything)

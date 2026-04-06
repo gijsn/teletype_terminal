@@ -25,6 +25,8 @@ const CommandHandler::commandItem_t CommandHandler::cmdList[] =
         {0x02, "help", &CommandHandler::cmd_help},  // Help function
         {0x03, "wifi", &CommandHandler::cmd_wifi},
         {0x04, "baud", &CommandHandler::cmd_baudrate},
+        {0x05, "rxpol", &CommandHandler::cmd_rxpol},
+        {0x06, "txpol", &CommandHandler::cmd_txpol},
 
 };
 
@@ -92,6 +94,32 @@ void CommandHandler::cmd_baudrate(char* cmd) {
         ESP_LOGI(TAG, "Setting baudrate to %d", baudrate);
         tty->set_baudrate(baudrate);
         asprintf(&response_buf, "Baudrate set to %d\r\n", baudrate);
+    }
+}
+
+void CommandHandler::cmd_rxpol(char* cmd) {
+    char* arg = strtok(NULL, " ");
+    if (arg != NULL) {
+        bool normal = atoi(arg) == 1;
+        ESP_LOGI(TAG, "Setting RX polarity to %s", normal ? "normal" : "inverted");
+        tty->set_rx_polarity(normal);
+        asprintf(&response_buf, "RX polarity set to %s\r\n", normal ? "normal" : "inverted");
+    } else {
+        ESP_LOGI(TAG, "Usage: \"rxpol {0|1}\"");
+        asprintf(&response_buf, "Usage: \"rxpol {0|1}\"\r\nCurrent RX polarity: %s\r\n", tty->get_rx_polarity() ? "normal" : "inverted");
+    }
+}
+
+void CommandHandler::cmd_txpol(char* cmd) {
+    char* arg = strtok(NULL, " ");
+    if (arg != NULL) {
+        bool normal = atoi(arg) == 1;
+        ESP_LOGI(TAG, "Setting TX polarity to %s", normal ? "normal" : "inverted");
+        tty->set_tx_polarity(normal);
+        asprintf(&response_buf, "TX polarity set to %s\r\n", normal ? "normal" : "inverted");
+    } else {
+        ESP_LOGI(TAG, "Usage: \"txpol {0|1}\"");
+        asprintf(&response_buf, "Usage: \"txpol {0|1}\"\r\nCurrent TX polarity: %s\r\n", tty->get_tx_polarity() ? "normal" : "inverted");
     }
 }
 

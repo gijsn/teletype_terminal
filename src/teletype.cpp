@@ -134,6 +134,13 @@ void Teletype::set_tx_polarity(bool polarity) {
     tx_polarity_normal = polarity;
 }
 
+bool Teletype::get_rx_polarity() {
+    return rx_polarity_normal;
+}
+
+bool Teletype::get_tx_polarity() {
+    return tx_polarity_normal;
+}
 void Teletype::tx_bits_to_tty(uint8_t bits) {
     ESP_LOGD(TAG, "Write: %x, delay %d", bits, DELAY_BIT);
     bool tx_bit{false};
