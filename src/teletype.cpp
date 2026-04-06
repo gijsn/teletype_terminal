@@ -31,7 +31,7 @@ static void IRAM_ATTR gpio_isr_handler(void* arg) {
     }
 }
 
-static void tty_rx_task(void* pvParameters) {
+void Teletype::tty_rx_task(void* pvParameters) {
     Teletype* self = static_cast<Teletype*>(pvParameters);
     while (true) {
         ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
@@ -84,7 +84,7 @@ Teletype::Teletype(uint8_t baudrate, uint8_t rx_pin, uint8_t tx_pin, uint8_t max
     print_ascii_character_to_tty('\n');
     characters_on_paper = 0;
 
-    if (xTaskCreate(tty_rx_task, "tty_rx", 4096, this, 5, &tty_rx_task_handle) != pdPASS) {
+    if (xTaskCreate(Teletype::tty_rx_task, "tty_rx", 4096, this, 5, &tty_rx_task_handle) != pdPASS) {
         ESP_LOGE(TAG, "Failed to create TTY RX task");
         tty_rx_task_handle = nullptr;
     }

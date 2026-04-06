@@ -63,6 +63,7 @@ class Teletype {
 
     void tx_bits_to_tty(uint8_t bits);
     uint8_t read_rx_bits_tty();
+    static void tty_rx_task(void* pvParameters);
     void shift_to_numbers();
     void shift_to_letters();
     void set_mode(tty_mode_t mode);
