@@ -111,7 +111,7 @@ void CommandHandler::execute_command_task(void* arg) {
     }
     uint16_t list_index = 0;
     for (const auto& cmd : cmdList) {
-        ESP_LOGI(TAG, "checking command %s against %s", cmd_str, cmd.funcTag);
+        ESP_LOGD(TAG, "checking command %s against %s", cmd_str, cmd.funcTag);
         if (strcmp(cmd_str, cmd.funcTag) == 0) {
             (params->handler->*cmd.funcAddr)(params->command);
             if (response_buf && strlen(response_buf) > 0) {
