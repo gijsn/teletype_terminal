@@ -21,9 +21,9 @@
 #include "stream_manager.h"
 #include "teletype.h"
 
-#define RX_PIN 5
-#define TX_PIN 2
-#define WIFI_LED
+#define RX_PIN 4
+#define TX_PIN 5
+#define WIFI_LED 2
 #define TELNET_PORT 23
 #define MAX_CLIENTS 5
 
@@ -33,6 +33,9 @@
 
 /*
 
+Debugger
+
+C:\Users\gijs_\OneDrive\Documenten\PlatformIO\teletype_terminal>C:\Users\gijs_\.platformio\packages\toolchain-xtensa@8.4.0\bin\xtensa-lx106-elf-addr2line.exe -pfiaC -e .pio\build\nodemcu\firmware.elf
 
 ESP WiFi - telnet controller for teletypes Siemens t100, 45.45 baud
 
@@ -278,10 +281,10 @@ extern "C" void app_main() {
     ESP_ERROR_CHECK(nvs_flash_init());
     cmd_mutex_stream = xSemaphoreCreateMutex();
 
-    // Initialize teletype
-    tty = new Teletype(50, RX_PIN, TX_PIN, 68);
     serial_handler = new SerialHandler();
     command_handler = new CommandHandler();
+    // Initialize teletype
+    tty = new Teletype(50, RX_PIN, TX_PIN, 68);
 
     // Subscribe outputs to the stream
     stream_manager.subscribe([](char c) {
@@ -302,7 +305,7 @@ extern "C" void app_main() {
 
     stream_manager.subscribe([](char c) {
         if (tty != nullptr) {
-            tty->print_ascii_character_to_tty(c);
+            // tty->print_ascii_character_to_tty(c);
         }
     });
     stream_manager.subscribe([](char c) {

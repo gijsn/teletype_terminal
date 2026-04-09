@@ -101,12 +101,12 @@ void CommandHandler::cmd_rxpol(char* cmd) {
     char* arg = strtok(NULL, " ");
     if (arg != NULL) {
         bool normal = atoi(arg) == 1;
-        ESP_LOGI(TAG, "Setting RX polarity to %s", normal ? "normal" : "inverted");
+        ESP_LOGI(TAG, "Setting RX polarity to %s", normal ? "inverted" : "normal");
         tty->set_rx_polarity(normal);
-        asprintf(&response_buf, "RX polarity set to %s\r\n", normal ? "normal" : "inverted");
+        asprintf(&response_buf, "RX polarity set to %s\r\n", normal ? "inverted" : "normal");
     } else {
         ESP_LOGI(TAG, "Usage: \"rxpol {0|1}\"");
-        asprintf(&response_buf, "Usage: \"rxpol {0|1}\"\r\nCurrent RX polarity: %s\r\n", tty->get_rx_polarity() ? "normal" : "inverted");
+        asprintf(&response_buf, "Usage: \"rxpol {0|1}\"\r\nCurrent RX polarity: %s\r\n", tty->get_rx_polarity() ? "inverted" : "normal");
     }
 }
 
@@ -114,12 +114,12 @@ void CommandHandler::cmd_txpol(char* cmd) {
     char* arg = strtok(NULL, " ");
     if (arg != NULL) {
         bool normal = atoi(arg) == 1;
-        ESP_LOGI(TAG, "Setting TX polarity to %s", normal ? "normal" : "inverted");
+        ESP_LOGI(TAG, "Setting TX polarity to %s", normal ? "inverted" : "normal");
         tty->set_tx_polarity(normal);
-        asprintf(&response_buf, "TX polarity set to %s\r\n", normal ? "normal" : "inverted");
+        asprintf(&response_buf, "TX polarity set to %s\r\n", normal ? "inverted" : "normal");
     } else {
         ESP_LOGI(TAG, "Usage: \"txpol {0|1}\"");
-        asprintf(&response_buf, "Usage: \"txpol {0|1}\"\r\nCurrent TX polarity: %s\r\n", tty->get_tx_polarity() ? "normal" : "inverted");
+        asprintf(&response_buf, "Usage: \"txpol {0|1}\"\r\nCurrent TX polarity: %s\r\n", tty->get_tx_polarity() ? "inverted" : "normal");
     }
 }
 

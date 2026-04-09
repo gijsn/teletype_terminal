@@ -33,8 +33,11 @@ static void IRAM_ATTR gpio_isr_handler(void* arg) {
 
 void Teletype::tty_rx_task(void* pvParameters) {
     Teletype* self = static_cast<Teletype*>(pvParameters);
+    ESP_LOGI("TTY", "ISR");
     while (true) {
+        ESP_LOGI("TTY", "Waiting for RX");
         ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+        ESP_LOGI("TTY", "Received notification for RX task");
         if (self != nullptr) {
             self->read_rx_bits_tty();
         }
@@ -53,8 +56,8 @@ Teletype::Teletype(uint8_t baudrate, uint8_t rx_pin, uint8_t tx_pin, uint8_t max
     TTY_RX_PIN = static_cast<gpio_num_t>(rx_pin);
     TTY_TX_PIN = static_cast<gpio_num_t>(tx_pin);
 
-    rx_polarity_normal = true;
-    tx_polarity_normal = true;
+    invert_rx = true;
+    invert_tx = false;
 
     // Configure GPIO pins
     // Set RX pin as output
@@ -66,13 +69,13 @@ Teletype::Teletype(uint8_t baudrate, uint8_t rx_pin, uint8_t tx_pin, uint8_t max
         .intr_type = GPIO_INTR_DISABLE,
     };
     gpio_config(&io_conf);
-    gpio_set_level(TTY_TX_PIN, tx_polarity_normal ^ 1);                           // Set RX high initially
+    gpio_set_level(TTY_TX_PIN, invert_tx ^ 1);                           // Set TX high initially
     io_conf = {
         .pin_bit_mask = (uint32_t)(1ULL << TTY_RX_PIN),
         .mode = GPIO_MODE_INPUT,
-        .pull_up_en = GPIO_PULLUP_ENABLE,
-        .pull_down_en = GPIO_PULLDOWN_DISABLE,
-        .intr_type = rx_polarity_normal ? GPIO_INTR_NEGEDGE : GPIO_INTR_POSEDGE,  // Enable interrupt for RX pin
+        .pull_up_en = invert_rx ? GPIO_PULLUP_ENABLE : GPIO_PULLUP_DISABLE,
+        .pull_down_en = invert_rx ? GPIO_PULLDOWN_DISABLE : GPIO_PULLDOWN_ENABLE,
+        .intr_type = invert_rx ? GPIO_INTR_POSEDGE : GPIO_INTR_NEGEDGE,  // Enable interrupt for RX pin
     };
     gpio_config(&io_conf);
 
@@ -93,6 +96,10 @@ Teletype::Teletype(uint8_t baudrate, uint8_t rx_pin, uint8_t tx_pin, uint8_t max
     }
 
     // Set up GPIO interrupt for RX pin (falling edge)
+    ESP_LOGI(TAG, "Setting up GPIO interru");
+    // gpio_set_intr_type(TTY_RX_PIN, GPIO_INTR_ANYEDGE);
+    gpio_install_isr_service(0);
+    ESP_LOGI(TAG, "Setting up GPIO interrupt for RX pin %d", TTY_RX_PIN);
     gpio_isr_handler_add(TTY_RX_PIN, gpio_isr_handler, nullptr);
 
     ESP_LOGI(TAG, "Teletype initialized on RX=%d TX=%d, baudrate=%d", TTY_RX_PIN, TTY_TX_PIN, TTY_BAUDRATE);
@@ -127,38 +134,39 @@ void Teletype::set_baudrate(uint8_t baudrate) {
 }
 
 void Teletype::set_rx_polarity(bool polarity) {
-    rx_polarity_normal = polarity;
+    invert_rx = polarity;
 }
 
 void Teletype::set_tx_polarity(bool polarity) {
-    tx_polarity_normal = polarity;
+    invert_tx = polarity;
 }
 
 bool Teletype::get_rx_polarity() {
-    return rx_polarity_normal;
+    return invert_rx;
 }
 
 bool Teletype::get_tx_polarity() {
-    return tx_polarity_normal;
+    return invert_tx;
 }
 void Teletype::tx_bits_to_tty(uint8_t bits) {
     ESP_LOGD(TAG, "Write: %x, delay %d", bits, DELAY_BIT);
     bool tx_bit{false};
 
     // Startbit, TODO: check polarity
-    gpio_set_level(TTY_RX_PIN, rx_polarity_normal ^ 1);  // Start bit is LOW
+    gpio_set_level(TTY_TX_PIN, invert_tx ^ 0);  // Start bit is LOW
     vTaskDelay(pdMS_TO_TICKS(DELAY_BIT));
 
     for (int i = 0; i < NUMBER_OF_BITS; i++) {
         tx_bit = (bits & (1 << i));
-        gpio_set_level(TTY_TX_PIN, tx_polarity_normal ^ tx_bit);
+        gpio_set_level(TTY_TX_PIN, invert_tx ^ tx_bit);
         vTaskDelay(pdMS_TO_TICKS(DELAY_BIT));
     }
 
     // Stopbit
-    gpio_set_level(TTY_RX_PIN, rx_polarity_normal ^ 0);
+    gpio_set_level(TTY_TX_PIN, invert_tx ^ 1);
     vTaskDelay(pdMS_TO_TICKS(DELAY_STOPBIT));
-    gpio_set_level(TTY_RX_PIN, rx_polarity_normal ^ 1);
+    gpio_set_level(TTY_TX_PIN, invert_tx ^ 1);
+    // vTaskDelay(pdMS_TO_TICKS(DELAY_STOPBIT * 3));
     ESP_LOGD(TAG, "Done write: %x", bits);
 }
 
@@ -174,13 +182,14 @@ uint8_t Teletype::read_rx_bits_tty() {
           |______|      |_____________|             |_________|
     */
     // Wait till we are in the middle of Startbit
-    vTaskDelay(pdMS_TO_TICKS(DELAY_BIT * 500));
-    if (gpio_get_level(TTY_RX_PIN) == rx_polarity_normal) {
+    ESP_LOGI(TAG, "Waiting for start bit...");
+    vTaskDelay(pdMS_TO_TICKS(DELAY_BIT * 0.5));
+    if (gpio_get_level(TTY_RX_PIN) == invert_rx) {
         for (int i = 0; i < 5; i++) {
-            vTaskDelay(pdMS_TO_TICKS(DELAY_BIT * 1000));
-            result += rx_polarity_normal ^ ((1 - gpio_get_level(TTY_TX_PIN)) << i);
+            vTaskDelay(pdMS_TO_TICKS(DELAY_BIT));
+            result += invert_rx ^ ((1 - gpio_get_level(TTY_RX_PIN)) << i);
         }
-        vTaskDelay(pdMS_TO_TICKS(DELAY_BIT * 1500));
+        vTaskDelay(pdMS_TO_TICKS(DELAY_STOPBIT));
     } else {
         ESP_LOGE(TAG, "ERROR! Start bit not 0! False trigger?");
     }
@@ -191,7 +200,7 @@ uint8_t Teletype::read_rx_bits_tty() {
     xSemaphoreGive(cmd_mutex_stream);
     // re-enable the interrupt
     gpio_isr_handler_add(TTY_RX_PIN, gpio_isr_handler, nullptr);
-
+    ESP_LOGI(TAG, "Read bits: %x, char: '%c'", result, ret);
     return ret;
 }
 
