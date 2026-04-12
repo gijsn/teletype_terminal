@@ -3,6 +3,7 @@
 #include <esp_log.h>
 #include <esp_wifi.h>
 #include <freertos/FreeRTOS.h>
+#include <freertos/event_groups.h>
 #include <freertos/task.h>
 #include <stdlib.h>
 
@@ -24,9 +25,10 @@ const CommandHandler::commandItem_t CommandHandler::cmdList[] =
     {
         {0x02, "help", &CommandHandler::cmd_help},  // Help function
         {0x03, "wifi", &CommandHandler::cmd_wifi},
-        {0x04, "baud", &CommandHandler::cmd_baudrate},
-        {0x05, "rxpol", &CommandHandler::cmd_rxpol},
-        {0x06, "txpol", &CommandHandler::cmd_txpol},
+        {0x04, "scan", &CommandHandler::cmd_scan},
+        {0x05, "baud", &CommandHandler::cmd_baudrate},
+        {0x06, "rxpol", &CommandHandler::cmd_rxpol},
+        {0x07, "txpol", &CommandHandler::cmd_txpol},
 
 };
 
@@ -49,36 +51,119 @@ void CommandHandler::cmd_help(char* arg) {
     }
 }
 
-void CommandHandler::cmd_wifi(char* arg) {
-    // get next argument
-    arg = strtok(NULL, " ");
-    wifi_config_t cfg = {};
+void CommandHandler::cmd_scan(char* arg) {
+    // Check if this is a scan command
+    asprintf(&response_buf, "Scanning for WiFi networks...\r\n");
 
-    if (arg != NULL) {
-        ESP_LOGI(TAG, "SSID: \"%s\"\n", arg);
-        strcpy((char*)cfg.sta.ssid, arg);
-    } else {
-        ESP_LOGI(TAG, "Usage: \"wifi {ssid} [password]\"");
-        esp_wifi_get_config(ESP_IF_WIFI_STA, &cfg);
-        tcpip_adapter_ip_info_t ip_info;
-        tcpip_adapter_get_ip_info(TCPIP_ADAPTER_IF_STA, &ip_info);
-        asprintf(&response_buf, "Usage: \"wifi {ssid} [password]\"\r\nCurrent settings, SSID: %s, Password: %s\r\nIs connected: %s\r\n", cfg.sta.ssid, cfg.sta.password, ip_info.ip.addr ? "Yes" : "No");
+    // Start WiFi scan
+    wifi_scan_config_t scan_config = {0};
+    scan_config.ssid = NULL;
+    scan_config.bssid = NULL;
+    scan_config.channel = 0;
+    scan_config.show_hidden = true;
+    scan_config.scan_type = WIFI_SCAN_TYPE_ACTIVE;
+
+    // Only initialize ONE union member:
+    scan_config.scan_time.active.min = 200;
+    scan_config.scan_time.active.max = 300;
+
+    esp_err_t err = esp_wifi_scan_start(&scan_config, true);
+    if (err != ESP_OK) {
+        asprintf(&response_buf, "WiFi scan failed: %s\r\n", esp_err_to_name(err));
         return;
     }
 
-    arg = strtok(NULL, " ");
-    if (arg != NULL) {  // otherwise password is blank
-        ESP_LOGI(TAG, "Password: \"%s\"\n", arg);
-        strcpy((char*)cfg.sta.password, arg);
-    } else {
-        ESP_LOGI(TAG, "No password\n");
-        strcpy((char*)cfg.sta.password, "");
+    uint16_t ap_count = 0;
+    esp_wifi_scan_get_ap_num(&ap_count);
+    ESP_LOGI(TAG, "Found %d WiFi networks", ap_count);
+
+    if (ap_count == 0) {
+        asprintf(&response_buf, "No WiFi networks found\r\n");
+        return;
     }
 
-    if (strlen((char*)cfg.sta.password)) {
-        cfg.sta.threshold.authmode = WIFI_AUTH_WPA2_PSK;
+    wifi_ap_record_t* ap_list = (wifi_ap_record_t*)malloc(ap_count * sizeof(wifi_ap_record_t));
+    if (ap_list == NULL) {
+        asprintf(&response_buf, "Memory allocation failed for AP list\r\n");
+        return;
     }
-    // TODO: save to nvs if it works!
+
+    esp_wifi_scan_get_ap_records(&ap_count, ap_list);
+
+    asprintf(&response_buf, "Found %d networks:\r\n", ap_count);
+    asprintf(&response_buf, "%sNo. SSID                         RSSI Auth\r\n", response_buf);
+    asprintf(&response_buf, "%s--- ------------------------------ ---- -----\r\n", response_buf);
+
+    for (uint16_t i = 0; i < ap_count; i++) {
+        const char* authmode_str = "OPEN";
+        switch (ap_list[i].authmode) {
+            case WIFI_AUTH_OPEN:
+                authmode_str = "OPEN";
+                break;
+            case WIFI_AUTH_WEP:
+                authmode_str = "WEP";
+                break;
+            case WIFI_AUTH_WPA_PSK:
+                authmode_str = "WPA";
+                break;
+            case WIFI_AUTH_WPA2_PSK:
+                authmode_str = "WPA2";
+                break;
+            case WIFI_AUTH_WPA_WPA2_PSK:
+                authmode_str = "WPA/WPA2";
+                break;
+            case WIFI_AUTH_WPA3_PSK:
+                authmode_str = "WPA3";
+                break;
+            default:
+                authmode_str = "OTHER";
+                break;
+        }
+
+        char ssid_str[33];
+        strcpy((char*)ssid_str, (char*)ap_list[i].ssid);
+
+        asprintf(&response_buf, "%s%2d  %-30s %4d %s\r\n",
+                 response_buf, i + 1, ssid_str, ap_list[i].rssi, authmode_str);
+    }
+    free(ap_list);
+    return;
+}
+
+void CommandHandler::cmd_wifi(char* arg) {
+    if (arg == NULL) {
+        ESP_LOGI(TAG, "Usage: \"wifi scan\" or \"wifi {ssid} [password]\"");
+        wifi_config_t cfg = {0};
+        esp_wifi_get_config(ESP_IF_WIFI_STA, &cfg);
+        tcpip_adapter_ip_info_t ip_info;
+        tcpip_adapter_get_ip_info(TCPIP_ADAPTER_IF_STA, &ip_info);
+        asprintf(&response_buf, "Usage: 'wifi scan' or 'wifi {ssid} [password]'\r\nCurrent SSID: %s\r\nIs connected: %s\r\n", cfg.sta.ssid, ip_info.ip.addr ? "Yes" : "No");
+        return;
+    }
+
+    // Normal WiFi connection
+    wifi_config_t cfg = {0};
+    esp_wifi_get_config(ESP_IF_WIFI_STA, &cfg);
+
+    strncpy((char*)cfg.sta.ssid, arg, sizeof(cfg.sta.ssid) - 1);
+    cfg.sta.ssid[sizeof(cfg.sta.ssid) - 1] = '\0';
+    cfg.sta.scan_method = WIFI_FAST_SCAN;
+    cfg.sta.channel = 0;
+
+    ESP_LOGI(TAG, "SSID: \"%s\"\n", arg);
+
+    arg = strtok(NULL, " ");
+    if (arg != NULL) {
+        strncpy((char*)cfg.sta.password, arg, sizeof(cfg.sta.password) - 1);
+        cfg.sta.password[sizeof(cfg.sta.password) - 1] = '\0';
+        ESP_LOGI(TAG, "Password: \"%s\"\n", arg);
+        cfg.sta.threshold.authmode = WIFI_AUTH_WPA2_PSK;
+    } else {
+        ESP_LOGI(TAG, "No password\n");
+        cfg.sta.password[0] = '\0';
+        cfg.sta.threshold.authmode = WIFI_AUTH_OPEN;
+    }
+
     esp_wifi_disconnect();
     esp_wifi_stop();
     ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
@@ -87,8 +172,7 @@ void CommandHandler::cmd_wifi(char* arg) {
     asprintf(&response_buf, "Connecting to WiFi SSID: %s\r\n", cfg.sta.ssid);
 }
 
-void CommandHandler::cmd_baudrate(char* cmd) {
-    char* arg = strtok(NULL, " ");
+void CommandHandler::cmd_baudrate(char* arg) {
     if (arg != NULL) {
         int baudrate = atoi(arg);
         ESP_LOGI(TAG, "Setting baudrate to %d", baudrate);
@@ -97,8 +181,7 @@ void CommandHandler::cmd_baudrate(char* cmd) {
     }
 }
 
-void CommandHandler::cmd_rxpol(char* cmd) {
-    char* arg = strtok(NULL, " ");
+void CommandHandler::cmd_rxpol(char* arg) {
     if (arg != NULL) {
         bool normal = atoi(arg) == 1;
         ESP_LOGI(TAG, "Setting RX polarity to %s", normal ? "inverted" : "normal");
@@ -110,8 +193,7 @@ void CommandHandler::cmd_rxpol(char* cmd) {
     }
 }
 
-void CommandHandler::cmd_txpol(char* cmd) {
-    char* arg = strtok(NULL, " ");
+void CommandHandler::cmd_txpol(char* arg) {
     if (arg != NULL) {
         bool normal = atoi(arg) == 1;
         ESP_LOGI(TAG, "Setting TX polarity to %s", normal ? "inverted" : "normal");
@@ -139,11 +221,14 @@ void CommandHandler::execute_command_task(void* arg) {
         vTaskDelete(NULL);
         return;
     }
+
     uint16_t list_index = 0;
     for (const auto& cmd : cmdList) {
         ESP_LOGD(TAG, "checking command %s against %s", cmd_str, cmd.funcTag);
         if (strcmp(cmd_str, cmd.funcTag) == 0) {
-            (params->handler->*cmd.funcAddr)(params->command);
+            // get next argument
+            cmd_str = strtok(NULL, " ");
+            (params->handler->*cmd.funcAddr)(cmd_str);
             if (response_buf && strlen(response_buf) > 0) {
                 ESP_LOGD(TAG, "Command response: %s", response_buf);
                 xSemaphoreTake(cmd_mutex_stream, portMAX_DELAY);

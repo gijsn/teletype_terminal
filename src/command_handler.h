@@ -22,6 +22,7 @@ class CommandHandler {
     static const commandItem_t cmdList[];
     void cmd_help(char* arg);
     void cmd_wifi(char* arg);
+    void cmd_scan(char* arg);
     void cmd_baudrate(char* cmd);
     void cmd_rxpol(char* cmd);
     void cmd_txpol(char* cmd);

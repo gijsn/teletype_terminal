@@ -37,6 +37,9 @@ Debugger
 
 C:\Users\gijs_\OneDrive\Documenten\PlatformIO\teletype_terminal>C:\Users\gijs_\.platformio\packages\toolchain-xtensa@8.4.0\bin\xtensa-lx106-elf-addr2line.exe -pfiaC -e .pio\build\nodemcu\firmware.elf
 
+menuconfig
+
+open platformio terminal, and run pio run -t menuconfig
 ESP WiFi - telnet controller for teletypes Siemens t100, 45.45 baud
 
 The stream manager takes care of inputs and outputs to other modules
@@ -93,7 +96,8 @@ static void event_handler(void* arg, esp_event_base_t event_base,
             ESP_LOGD(TAG, "retry to connect to the AP: %s\r\n", conf.sta.ssid);
         } else {
             xEventGroupSetBits(s_wifi_event_group, WIFI_FAIL_BIT);
-            ESP_LOGI(TAG, "connect to the AP fail");
+            uint8_t reason = ((wifi_event_sta_disconnected_t*)(event_data))->reason;
+            ESP_LOGI(TAG, "connect to the AP fail %d", reason);
             xSemaphoreTake(cmd_mutex_stream, portMAX_DELAY);
             stream_manager.publish("Disconnected from WiFi\r\n");
             xSemaphoreGive(cmd_mutex_stream);
@@ -138,6 +142,15 @@ void wifiInit() {
     wifi_config_t conf;
     esp_wifi_get_config(ESP_IF_WIFI_STA, &conf);
     ESP_LOGI(TAG, "Connecting to the AP: %s, with Password %s\r\n", conf.sta.ssid, conf.sta.password);
+    // printf("\r\n\r\n");
+    // for (int i = 0; i < 32; i++) {
+    //     printf("%x", conf.sta.ssid[i]);
+    // }
+    // printf("\r\n");
+    // for (int i = 0; i < 64; i++) {
+    //     printf("%x", conf.sta.password[i]);
+    // }
+    // printf("\r\n");
     ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
     ESP_ERROR_CHECK(esp_wifi_start());
     // ESP_ERROR_CHECK(esp_wifi_set_auto_connect(true));
@@ -174,6 +187,7 @@ void telnetTask(void* pvParameters) {
         vTaskDelay(pdMS_TO_TICKS(10));
         if (xEventGroupGetBits(s_wifi_event_group) | WIFI_CONNECTING_BIT) {
             ESP_LOGI(TAG, ".");
+            vTaskDelay(pdMS_TO_TICKS(1000));
             return;
         }
         if (xEventGroupGetBits(s_wifi_event_group) | WIFI_CONNECTED_BIT) {
