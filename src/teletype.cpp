@@ -86,8 +86,8 @@ Teletype::Teletype(uint8_t baudrate, uint8_t rx_pin, uint8_t tx_pin, uint8_t max
     vTaskDelay(pdMS_TO_TICKS(DELAY_BIT * 5));
 
     // initialize with CR + LF
-    print_ascii_character_to_tty('\r');
-    print_ascii_character_to_tty('\n');
+    // print_ascii_character_to_tty('\r');
+    // print_ascii_character_to_tty('\n');
     characters_on_paper = 0;
 
     if (xTaskCreate(Teletype::tty_rx_task, "tty_rx", 4096, this, 5, &tty_rx_task_handle) != pdPASS) {
@@ -178,8 +178,10 @@ uint8_t Teletype::read_rx_bits_tty() {
     /*
     Pattern:
     Startbit (1) | bit0 | bit1 | bit2 | bit3 | bit4 | Stopbit (1.5)
-    ______        ______               _____________           ______
-          |______|      |_____________|             |_________|
+     ______       ______               _____________           ______
+    |      |_____|      |_____________|             |_________|
+    TODO: getting the lenght of the startbit will give the baudrate
+
     */
     // Wait till we are in the middle of Startbit
     ESP_LOGI(TAG, "Waiting for start bit...");
@@ -187,11 +189,15 @@ uint8_t Teletype::read_rx_bits_tty() {
     if (gpio_get_level(TTY_RX_PIN) == invert_rx) {
         for (int i = 0; i < 5; i++) {
             vTaskDelay(pdMS_TO_TICKS(DELAY_BIT));
-            result += invert_rx ^ ((1 - gpio_get_level(TTY_RX_PIN)) << i);
+            ESP_LOGI(TAG, "Reading bit %d", gpio_get_level(TTY_RX_PIN));
+            result += (0b1 & gpio_get_level(TTY_RX_PIN)) << i;
         }
         vTaskDelay(pdMS_TO_TICKS(DELAY_STOPBIT));
     } else {
         ESP_LOGE(TAG, "ERROR! Start bit not 0! False trigger?");
+    }
+    if (invert_rx) {
+        result = (~result & 0b11111);  // mask to 5 bits
     }
 
     char ret = static_cast<char>(tolower(convert_baudot_char_to_ascii(result)));
