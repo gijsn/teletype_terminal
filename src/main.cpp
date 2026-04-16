@@ -260,7 +260,7 @@ void streamTask(void* pvParameters) {
         write(irc_socket, "USER  uk 8 *  : Uwe Kamper\r", 22);
         write(irc_socket, "NICK uk\r", 8);
         write(irc_socket, "JOIN #teletype\r", 16);
-        handle_irc_connection(irc_socket);
+        // handle_irc_connection(irc_socket);
     }
 
     vTaskDelay(pdMS_TO_TICKS(10));

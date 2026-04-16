@@ -18,6 +18,7 @@
 extern StreamManager stream_manager;
 extern Teletype* tty;
 extern SemaphoreHandle_t cmd_mutex_stream;
+TaskHandle_t command_task_handle{nullptr};
 char* buf;
 char* response_buf;
 
@@ -56,7 +57,7 @@ void CommandHandler::cmd_scan(char* arg) {
     asprintf(&response_buf, "Scanning for WiFi networks...\r\n");
 
     // Start WiFi scan
-    wifi_scan_config_t scan_config = {0};
+    wifi_scan_config_t scan_config;
     scan_config.ssid = NULL;
     scan_config.bssid = NULL;
     scan_config.channel = 0;
@@ -133,10 +134,11 @@ void CommandHandler::cmd_scan(char* arg) {
 }
 
 void CommandHandler::cmd_wifi(char* arg) {
+    wifi_config_t cfg;
+    esp_wifi_get_config(ESP_IF_WIFI_STA, &cfg);
+
     if (arg == NULL) {
         ESP_LOGI(TAG, "Usage: \"wifi scan\" or \"wifi {ssid} [password]\"");
-        wifi_config_t cfg = {0};
-        esp_wifi_get_config(ESP_IF_WIFI_STA, &cfg);
         tcpip_adapter_ip_info_t ip_info;
         tcpip_adapter_get_ip_info(TCPIP_ADAPTER_IF_STA, &ip_info);
         asprintf(&response_buf, "Usage: 'wifi scan' or 'wifi {ssid} [password]'\r\nCurrent SSID: %s\r\nIs connected: %s\r\n", cfg.sta.ssid, ip_info.ip.addr ? "Yes" : "No");
@@ -144,9 +146,6 @@ void CommandHandler::cmd_wifi(char* arg) {
     }
 
     // Normal WiFi connection
-    wifi_config_t cfg = {0};
-    esp_wifi_get_config(ESP_IF_WIFI_STA, &cfg);
-
     strncpy((char*)cfg.sta.ssid, arg, sizeof(cfg.sta.ssid) - 1);
     cfg.sta.ssid[sizeof(cfg.sta.ssid) - 1] = '\0';
     cfg.sta.scan_method = WIFI_FAST_SCAN;
@@ -255,6 +254,12 @@ void CommandHandler::execute_command_task(void* arg) {
 }
 bool capital = false;
 void CommandHandler::input(char c) {
+    if (command_task_handle != nullptr && eTaskGetState(command_task_handle) == eDeleted) {
+        command_in_progress = false;
+    } else {
+        ESP_LOGI(TAG, "Command task state: %d", command_task_handle != nullptr ? eTaskGetState(command_task_handle) : -1);
+        return;
+    }
     ESP_LOGD(TAG, "Received command input: '%c'", c);
     if (c == '\n' || c == '\r') {
         if (!command_in_progress || strlen(buf) == 0) {
@@ -269,7 +274,7 @@ void CommandHandler::input(char c) {
                 params->handler = this;
                 params->command = cmd_copy;
                 ESP_LOGD(TAG, "Starting command execution task for command: '%s'", cmd_copy);
-                xTaskCreate(CommandHandler::execute_command_task, "execute_command", 4096, params, 5, NULL);
+                xTaskCreate(CommandHandler::execute_command_task, "execute_command", 4096, params, 5, &command_task_handle);
             } else {
                 free(cmd_copy);
                 ESP_LOGE(TAG, "Failed to allocate command task params");
