@@ -75,6 +75,7 @@ CommandHandler* command_handler = nullptr;
 
 SemaphoreHandle_t cmd_mutex_stream;
 int telnet_socket = -1;
+int irc_socket = -1;
 int client_sockets[MAX_CLIENTS] = {-1, -1, -1, -1, -1};
 static EventGroupHandle_t s_wifi_event_group;
 static int s_retry_num = 0;
@@ -232,52 +233,37 @@ void telnetTask(void* pvParameters) {
 }
 
 void streamTask(void* pvParameters) {
-    while (1) {
-        // Handle UART (Serial) input
-        // if (serial_handler != nullptr) {
-        //     int len = serial_handler->uart_read(uart_buf);
-        //     if (len > 0) {
-        //         ESP_LOGI("STREAM", "Read %d bytes from UART", len);
-        //         for (int i = 0; i < len; i++) {
-        //             streamManager.publish((char)uart_buf[i]);
-        //         }
-        //     }
-        // }
-
-        // Handle Teletype input
-        // if (tty != nullptr) {
-        //     char tty_char = tty->read_rx_bits_tty();
-        //     // ESP_LOGI("STREAM", "Read char '%c' from Teletype", tty_char);
-        //     if (tty_char != '\0') {
-        //         streamManager.publish(tty_char);
-        //     }
-        // }
-        // if (command_handler != nullptr) {
-        //     char response = command_handler->read_response();
-        //     if (response != '\0') {
-        //         streamManager.publish(response);
-        //     }
-        // }
-
-        // Broadcast to all connected clients
-        for (int i = 0; i < MAX_CLIENTS; i++) {
-            if (client_sockets[i] >= 0) {
-                // ESP_LOGI("STREAM", "Checking client socket %d for incoming data", i);
-                char buf[1];
-                int ret = recv(client_sockets[i], buf, 1, MSG_DONTWAIT);
-                if (ret > 0) {
-                    xSemaphoreTake(cmd_mutex_stream, portMAX_DELAY);
-                    stream_manager.publish(buf[0]);
-                    xSemaphoreGive(cmd_mutex_stream);
-                } else if (ret == 0) {
-                    close(client_sockets[i]);
-                    client_sockets[i] = -1;
-                }
-            }
-        }
-
-        vTaskDelay(pdMS_TO_TICKS(10));
+    irc_socket = socket(AF_INET, SOCK_STREAM, 0);
+    if (irc_socket < 0) {
+        ESP_LOGE(TAG, "Unable to create socket");
     }
+
+    struct sockaddr_in sock_addr = {};
+    sock_addr.sin_family = AF_INET;
+    sock_addr.sin_port = htons(TELNET_PORT);
+    sock_addr.sin_addr.s_addr = INADDR_ANY;
+
+    int client_count = 0;
+    while (1) {
+        // if not connected, do not run
+        if (xEventGroupWaitBits(s_wifi_event_group, WIFI_CONNECTED_BIT, pdFALSE, pdFALSE, 0)) {
+            // ESP_LOGI(TAG, "Waiting for WiFi connection...");
+            vTaskDelay(pdMS_TO_TICKS(1000));
+            continue;
+        }
+        if (bind(irc_socket, (struct sockaddr*)&sock_addr, sizeof(sock_addr)) < 0) {
+            ESP_LOGE(TAG, "Socket bind failed");
+            close(irc_socket);
+            vTaskDelete(nullptr);
+            return;
+        }
+        write(irc_socket, "USER  uk 8 *  : Uwe Kamper\r", 22);
+        write(irc_socket, "NICK uk\r", 8);
+        write(irc_socket, "JOIN #teletype\r", 16);
+        handle_irc_connection(irc_socket);
+    }
+
+    vTaskDelay(pdMS_TO_TICKS(10));
 }
 
 void write_header() {
@@ -328,7 +314,7 @@ extern "C" void app_main() {
     wifiInit();
     //  Create tasks
     //  xTaskCreate(telnetTask, "Telnet", 4096, nullptr, 5, nullptr);
-    //  xTaskCreate(streamTask, "Stream", 4096, nullptr, 5, nullptr);
+    xTaskCreate(streamTask, "Stream", 4096, nullptr, 5, nullptr);
     xTaskCreate(SerialHandler::uart_rx_task, "UART_RX", 4096, nullptr, 5, nullptr);
 
     // write telex header
