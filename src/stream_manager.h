@@ -9,7 +9,6 @@
 class StreamManager {
    public:
     using Subscriber = std::function<void(char)>;
-
     void subscribe(Subscriber sub) {
         subscribers.push_back(sub);
     }

@@ -311,6 +311,11 @@ extern "C" void app_main() {
     stream_manager.subscribe([](char c) {
         command_handler->input(c);
     });
+    stream_manager.subscribe([](char c) {
+        if (command_handler != nullptr && command_handler->is_command()) {
+            // publish input to external IRC chat
+        }
+    });
     wifiInit();
     //  Create tasks
     //  xTaskCreate(telnetTask, "Telnet", 4096, nullptr, 5, nullptr);

@@ -20,7 +20,6 @@ constexpr const char TAG[] = "TTY";
 
 static TaskHandle_t tty_rx_task_handle = nullptr;
 extern StreamManager stream_manager;
-extern CommandHandler* command_handler;
 extern SemaphoreHandle_t cmd_mutex_stream;
 
 // handle the incoming bits from the teletype, triggered by the GPIO interrupt
@@ -206,9 +205,6 @@ uint8_t Teletype::read_rx_bits_tty() {
     char ret = static_cast<char>(tolower(convert_baudot_char_to_ascii(result)));
     xSemaphoreTake(cmd_mutex_stream, portMAX_DELAY);
     stream_manager.publish(ret);
-    if (command_handler != nullptr && command_handler->is_command()) {
-        // publish input to external
-    }
     xSemaphoreGive(cmd_mutex_stream);
     // re-enable the interrupt
     gpio_isr_handler_add(TTY_RX_PIN, gpio_isr_handler, nullptr);
