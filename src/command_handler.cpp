@@ -61,11 +61,10 @@ void CommandHandler::cmd_scan(char* arg) {
     scan_config.bssid = NULL;
     scan_config.channel = 0;
     scan_config.show_hidden = true;
-    scan_config.scan_type = WIFI_SCAN_TYPE_ACTIVE;
+    scan_config.scan_type = WIFI_SCAN_TYPE_PASSIVE;
 
     // Only initialize ONE union member:
-    scan_config.scan_time.active.min = 200;
-    scan_config.scan_time.active.max = 300;
+    scan_config.scan_time.passive = 120;  // 120ms per channel for passive scan
 
     esp_err_t err = esp_wifi_scan_start(&scan_config, true);
     if (err != ESP_OK) {
@@ -114,6 +113,9 @@ void CommandHandler::cmd_scan(char* arg) {
                 break;
             case WIFI_AUTH_WPA3_PSK:
                 authmode_str = "WPA3";
+                break;
+            case WIFI_AUTH_WPA2_WPA3_PSK:
+                authmode_str = "WPA2/WPA3";
                 break;
             default:
                 authmode_str = "OTHER";
@@ -232,7 +234,7 @@ void CommandHandler::execute_command_task(void* arg) {
             if (response_buf && strlen(response_buf) > 0) {
                 ESP_LOGD(TAG, "Command response: %s", response_buf);
                 xSemaphoreTake(cmd_mutex_stream, portMAX_DELAY);
-                stream_manager.publish(response_buf);
+                stream_manager.publish(response_buf);  // local only
                 xSemaphoreGive(cmd_mutex_stream);
             }
             if (response_buf) {
@@ -242,7 +244,7 @@ void CommandHandler::execute_command_task(void* arg) {
             vTaskDelete(NULL);
         }
         ESP_LOGD(TAG, "next %d", list_index);
-        list_index++;  // Next function
+        list_index++;                                  // Next function
     }
     ESP_LOGD(TAG, "Command not found: %s", cmd_str);
     if (response_buf) {
@@ -252,11 +254,10 @@ void CommandHandler::execute_command_task(void* arg) {
     vTaskDelete(NULL);
 }
 bool capital = false;
-bool command = false;
 void CommandHandler::input(char c) {
     ESP_LOGD(TAG, "Received command input: '%c'", c);
     if (c == '\n' || c == '\r') {
-        if (strlen(buf) == 0) {
+        if (!command_in_progress || strlen(buf) == 0) {
             return;
         }
         ESP_LOGD(TAG, "Command executed: '%s'", buf);
@@ -280,10 +281,10 @@ void CommandHandler::input(char c) {
 
         buf[0] = '\0';  // Clear the buffer
         capital = false;
-        command = false;
+        command_in_progress = false;
     } else if (c == '+') {
         // next character is a captital
-        if (capital) {
+        if (capital && command_in_progress) {
             // if ++, then + is escaped, and is a character)
             capital = false;
             const char c2[2] = {c, '\0'};
@@ -291,9 +292,9 @@ void CommandHandler::input(char c) {
         }
         capital = true;
     } else if (c == '/') {
-        command = true;
+        command_in_progress = true;
     } else if (strlen(buf) < INPUT_BUF_SIZE - 1) {
-        if (!command) {
+        if (!command_in_progress) {
             return;
         }
         if (capital) {

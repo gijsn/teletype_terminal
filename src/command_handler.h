@@ -8,6 +8,9 @@ class CommandHandler {
     CommandHandler();
     void input(char c);
     char read_response();
+    bool is_command() {
+        return command_in_progress;
+    }
 
    private:
     struct commandItem_t {
@@ -19,6 +22,7 @@ class CommandHandler {
         CommandHandler* handler;
         char* command;
     };
+    bool command_in_progress{false};
     static const commandItem_t cmdList[];
     void cmd_help(char* arg);
     void cmd_wifi(char* arg);
