@@ -87,7 +87,7 @@ static void event_handler(void* arg, esp_event_base_t event_base,
         xEventGroupClearBits(s_wifi_event_group, WIFI_CONNECTED_BIT);
         xEventGroupClearBits(s_wifi_event_group, WIFI_FAIL_BIT);
         xEventGroupSetBits(s_wifi_event_group, WIFI_CONNECTING_BIT);
-        stream_manager.publish("Connecting to WiFi...\r\n");
+        stream_manager.publish("Connecting to WiFi...\r\n", SOURCE_COMMAND);
     } else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_DISCONNECTED) {
         if (s_retry_num < 10) {
             esp_wifi_connect();
@@ -100,7 +100,7 @@ static void event_handler(void* arg, esp_event_base_t event_base,
             uint8_t reason = ((wifi_event_sta_disconnected_t*)(event_data))->reason;
             ESP_LOGI(TAG, "connect to the AP fail %d", reason);
             xSemaphoreTake(cmd_mutex_stream, portMAX_DELAY);
-            stream_manager.publish("Disconnected from WiFi\r\n");
+            stream_manager.publish("Disconnected from WiFi\r\n", SOURCE_COMMAND);
             xSemaphoreGive(cmd_mutex_stream);
             mdns_free();
         }
@@ -115,7 +115,7 @@ static void event_handler(void* arg, esp_event_base_t event_base,
         char* resp;
         asprintf(&resp, "Connected to WiFi network with SSID: %s, and IP %s\r\n", conf.sta.ssid, ip4addr_ntoa(&event->ip_info.ip));
         xSemaphoreTake(cmd_mutex_stream, portMAX_DELAY);
-        stream_manager.publish(resp);
+        stream_manager.publish(resp, SOURCE_COMMAND);
         free(resp);
         xSemaphoreGive(cmd_mutex_stream);
         s_retry_num = 0;
@@ -271,7 +271,7 @@ void write_header() {
     // ESP_LOGI(TAG, " header);
     xSemaphoreTake(cmd_mutex_stream, portMAX_DELAY);
     for (int i = 0; i < strlen(header); i++) {
-        stream_manager.publish(header[i]);
+        stream_manager.publish(header[i], SOURCE_COMMAND);
     }
     xSemaphoreGive(cmd_mutex_stream);
 }
@@ -287,31 +287,40 @@ extern "C" void app_main() {
     tty = new Teletype(50, RX_PIN, TX_PIN, 68);
 
     // Subscribe outputs to the stream
-    stream_manager.subscribe([](char c) {
+    stream_manager.subscribe([](char c, int source) {
         // Write to UART
+        // if (source == SOURCE_SERIAL) {
+        //     return;
+        // }
         if (serial_handler != nullptr) {
             serial_handler->uart_tx(c);
         }
     });
 
-    stream_manager.subscribe([](char c) {
-        // Write to all telnet clients
-        for (int i = 0; i < MAX_CLIENTS; i++) {
-            if (client_sockets[i] >= 0) {
-                send(client_sockets[i], &c, 1, 0);
+    stream_manager.subscribe([](char c, int source) {
+        // Write to all telnet clients, only if source is teletype
+        if (source == SOURCE_TELETYPE) {
+            for (int i = 0; i < MAX_CLIENTS; i++) {
+                if (client_sockets[i] >= 0) {
+                    send(client_sockets[i], &c, 1, 0);
+                }
             }
         }
     });
 
-    stream_manager.subscribe([](char c) {
-        if (tty != nullptr) {
-            // tty->print_ascii_character_to_tty(c);
+    stream_manager.subscribe([](char c, int source) {
+        if (tty != nullptr && source != SOURCE_TELETYPE) {
+            return;
         }
+        tty->print_ascii_character_to_tty(c);
     });
-    stream_manager.subscribe([](char c) {
+    stream_manager.subscribe([](char c, int source) {
+        if (source == SOURCE_COMMAND || source == SOURCE_EXTERNAL) {
+            return;
+        }
         command_handler->input(c);
     });
-    stream_manager.subscribe([](char c) {
+    stream_manager.subscribe([](char c, int source) {
         if (command_handler != nullptr && command_handler->is_command()) {
             // publish input to external IRC chat
         }
@@ -319,7 +328,7 @@ extern "C" void app_main() {
     wifiInit();
     //  Create tasks
     //  xTaskCreate(telnetTask, "Telnet", 4096, nullptr, 5, nullptr);
-    xTaskCreate(streamTask, "Stream", 4096, nullptr, 5, nullptr);
+    // xTaskCreate(streamTask, "Stream", 4096, nullptr, 5, nullptr);
     xTaskCreate(SerialHandler::uart_rx_task, "UART_RX", 4096, nullptr, 5, nullptr);
 
     // write telex header

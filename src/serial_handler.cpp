@@ -1,9 +1,9 @@
-
 // system includes
 // clang-format off
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 #include <freertos/queue.h>
+#include <freertos/event_groups.h>
 #include <driver/uart.h>
 #include <esp_log.h>
 
@@ -63,7 +63,7 @@ void SerialHandler::uart_rx_task(void* pvParameters)  {
                     buf[event.size] = '\0';
                     ESP_LOGD(TAG, "UART data received: %d bytes of %d", read,event.size);               
                     xSemaphoreTake(cmd_mutex_stream, portMAX_DELAY);    
-                    stream_manager.publish((char*)buf);  
+                    stream_manager.publish((char*)buf, SOURCE_SERIAL);  
                     xSemaphoreGive(cmd_mutex_stream);
                     break;
                 }

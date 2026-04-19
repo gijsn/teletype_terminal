@@ -204,7 +204,7 @@ uint8_t Teletype::read_rx_bits_tty() {
 
     char ret = static_cast<char>(tolower(convert_baudot_char_to_ascii(result)));
     xSemaphoreTake(cmd_mutex_stream, portMAX_DELAY);
-    stream_manager.publish(ret);
+    stream_manager.publish(ret, SOURCE_TELETYPE);
     xSemaphoreGive(cmd_mutex_stream);
     // re-enable the interrupt
     gpio_isr_handler_add(TTY_RX_PIN, gpio_isr_handler, nullptr);

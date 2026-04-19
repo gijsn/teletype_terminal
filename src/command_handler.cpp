@@ -233,7 +233,7 @@ void CommandHandler::execute_command_task(void* arg) {
             if (response_buf && strlen(response_buf) > 0) {
                 ESP_LOGD(TAG, "Command response: %s", response_buf);
                 xSemaphoreTake(cmd_mutex_stream, portMAX_DELAY);
-                stream_manager.publish(response_buf);  // local only
+                stream_manager.publish(response_buf, SOURCE_COMMAND);  // local only
                 xSemaphoreGive(cmd_mutex_stream);
             }
             if (response_buf) {
@@ -243,7 +243,7 @@ void CommandHandler::execute_command_task(void* arg) {
             vTaskDelete(NULL);
         }
         ESP_LOGD(TAG, "next %d", list_index);
-        list_index++;                                  // Next function
+        list_index++;                                                  // Next function
     }
     ESP_LOGD(TAG, "Command not found: %s", cmd_str);
     if (response_buf) {
