@@ -4,6 +4,7 @@
 #include <freertos/task.h>
 #include <freertos/queue.h>
 #include <freertos/event_groups.h>
+#include <freertos/semphr.h>
 #include <driver/uart.h>
 #include <esp_log.h>
 
