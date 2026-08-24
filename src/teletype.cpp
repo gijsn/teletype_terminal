@@ -46,7 +46,13 @@ static void IRAM_ATTR gpio_isr_handler(void* arg) {
         }
     }
 }
-// run always in a separate task, triggered by the GPIO interrupt
+/*
+run always in a separate task, triggered by the GPIO interrupt
+Interrupt will notify the task, then the bits will be read
+Character will be received and published to StreamManager
+
+*/
+
 void Teletype::tty_rx_task(void* pvParameters) {
     Teletype* self = static_cast<Teletype*>(pvParameters);
     ESP_LOGI("TTY", "ISR");

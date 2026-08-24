@@ -61,7 +61,29 @@ they can subscribe and publish to the stream manager, which then pushes data usi
                              +-------+
 
 
-*/
+    The classes work as follows:
+
+    +-------------+ From TTY keyboard          Not source TTY  +-------------+
+    | Teletype RX |-----------+                          +---->| Teletype TX |
+    +-------------+           |                          |     +-------------+
+                              |                          |
+    +------------------+ UART |                          | All  +------------------+
+    | SerialHandler RX |------+                          +----->| SerialHandler TX |
+    +------------------+      |    +---------------+     |      +------------------+
+                              +----| StreamManager |-----+
+    +-------------------+     |    +---------------+     | Not source CMD/TELNET  +-------------------+
+    | CommandHandler Tx |-----+                          +----------------------->| CommandHandler Rx |
+    +-------------------+     |                          |                        +-------------------+
+                              |                          |
+    +-----------+             |                          | Not source CMD/UART    +-----------+
+    | Telnet Rx |-------------+                          +----------------------->| Telnet Tx |
+    +-----------+                                                                 +-----------+
+
+    The classes can subscribe to the streamManager by providing a function that takes a character and a source parameter
+    The classes can publish to the streamManager by calling the publish function with a character and a source parameter
+    The source can be used to filter out inputs from specific sources.
+
+    */
 
 namespace {
 constexpr const char TAG[] = "MAIN";
@@ -78,7 +100,7 @@ int irc_socket = -1;
 int client_sockets[MAX_CLIENTS] = {-1, -1, -1, -1, -1};
 static EventGroupHandle_t s_wifi_event_group;
 static int s_retry_num = 0;
-
+// handle WiFi events (connect / disconnect / got IP)
 static void event_handler(void* arg, esp_event_base_t event_base,
                           int32_t event_id, void* event_data) {
     if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_START) {
@@ -284,6 +306,9 @@ extern "C" void app_main() {
     command_handler = new CommandHandler();
     // Initialize teletype
     tty = new Teletype(50, RX_PIN, TX_PIN, 68);
+
+    // StreamManager task will handle all publishes and subscribers to the stream manager using for-loop
+    // Will also handle excepts
 
     // Subscribe outputs to the stream
     stream_manager.subscribe([](char c, int source) {

@@ -254,6 +254,14 @@ void CommandHandler::execute_command_task(void* arg) {
     vTaskDelete(NULL);
 }
 bool capital = false;
+
+/*
+Will take one character at a time from the StreamManager
+Will build a command string if the first character is a forward slash (/) until a newline is received
+Then will execute the command in a separate task
+When the task is done, it will reset the command_in_progress flag to allow new commands to be processed
+
+*/
 void CommandHandler::input(char c) {
     // query if task is done, then reset command_in_progress for command parser
     if (command_task_handle != nullptr && eTaskGetState(command_task_handle) != eRunning && eTaskGetState(command_task_handle) != eReady && eTaskGetState(command_task_handle) != eBlocked) {
