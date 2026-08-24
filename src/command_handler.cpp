@@ -255,18 +255,21 @@ void CommandHandler::execute_command_task(void* arg) {
 }
 bool capital = false;
 void CommandHandler::input(char c) {
-    if (command_task_handle != nullptr && eTaskGetState(command_task_handle) == eDeleted) {
+    // query if task is done, then reset command_in_progress for command parser
+    if (command_task_handle != nullptr && eTaskGetState(command_task_handle) != eRunning && eTaskGetState(command_task_handle) != eReady && eTaskGetState(command_task_handle) != eBlocked) {
+        ESP_LOGI(TAG, "Command task finished, resetting command_in_progress");
         command_in_progress = false;
+        command_task_handle = nullptr;
     } else {
         ESP_LOGI(TAG, "Command task state: %d", command_task_handle != nullptr ? eTaskGetState(command_task_handle) : -1);
-        return;
+        // return;
     }
-    ESP_LOGD(TAG, "Received command input: '%c'", c);
+    ESP_LOGI(TAG, "Received command input: '%c'", c);
     if (c == '\n' || c == '\r') {
         if (!command_in_progress || strlen(buf) == 0) {
             return;
         }
-        ESP_LOGD(TAG, "Command executed: '%s'", buf);
+        ESP_LOGI(TAG, "Command executed: '%s'", buf);
         char* cmd_copy = (char*)malloc(strlen(buf) + 1);
         if (cmd_copy != nullptr) {
             strcpy(cmd_copy, buf);
@@ -289,7 +292,7 @@ void CommandHandler::input(char c) {
         capital = false;
         command_in_progress = false;
     } else if (c == '+') {
-        // next character is a captital
+        // next character is a capital
         if (capital && command_in_progress) {
             // if ++, then + is escaped, and is a character)
             capital = false;
@@ -307,7 +310,7 @@ void CommandHandler::input(char c) {
             c = (char)toupper(c);
             capital = false;
         }
-        ESP_LOGD(TAG, "Appending '%c' to command buffer %s, strlen %d", c, buf, strlen(buf));
+        ESP_LOGI(TAG, "Appending '%c' to command buffer %s, strlen %d", c, buf, strlen(buf));
         const char c2[2] = {c, '\0'};  // Create a string with the character and null terminator
         strcat(buf, c2);               // Append character to buffer
     } else {

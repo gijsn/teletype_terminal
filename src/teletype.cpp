@@ -22,26 +22,51 @@ static TaskHandle_t tty_rx_task_handle = nullptr;
 extern StreamManager stream_manager;
 extern SemaphoreHandle_t cmd_mutex_stream;
 
+#define START_BIT_DEBOUNCE_TIME_CREED 10  // in milliseconds
+
+#define BYTE_TO_BINARY_PATTERN "%c%c%c%c%c%c%c%c"
+#define BYTE_TO_BINARY(byte)         \
+    ((byte) & 0x80 ? '1' : '0'),     \
+        ((byte) & 0x40 ? '1' : '0'), \
+        ((byte) & 0x20 ? '1' : '0'), \
+        ((byte) & 0x10 ? '1' : '0'), \
+        ((byte) & 0x08 ? '1' : '0'), \
+        ((byte) & 0x04 ? '1' : '0'), \
+        ((byte) & 0x02 ? '1' : '0'), \
+        ((byte) & 0x01 ? '1' : '0')
+#define DEBUG_PIN GPIO_NUM_16  // D0
 // handle the incoming bits from the teletype, triggered by the GPIO interrupt
 static void IRAM_ATTR gpio_isr_handler(void* arg) {
     if (tty_rx_task_handle != nullptr) {
         BaseType_t xHigherPriorityTaskWoken = pdFALSE;
         vTaskNotifyGiveFromISR(tty_rx_task_handle, &xHigherPriorityTaskWoken);
+        gpio_set_level(DEBUG_PIN, 1);
         if (xHigherPriorityTaskWoken != pdFALSE) {
             portYIELD_FROM_ISR();
         }
     }
 }
-
+// run always in a separate task, triggered by the GPIO interrupt
 void Teletype::tty_rx_task(void* pvParameters) {
     Teletype* self = static_cast<Teletype*>(pvParameters);
     ESP_LOGI("TTY", "ISR");
     while (true) {
         ESP_LOGI("TTY", "Waiting for RX");
+        // wait for notification from the ISR
         ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
         ESP_LOGI("TTY", "Received notification for RX task");
+        gpio_set_level(DEBUG_PIN, 0);
+        char c = '\0';
         if (self != nullptr) {
-            self->read_rx_bits_tty();
+#ifdef CREED
+            c = self->read_rx_bits_tty_creed();
+#else
+            c = self->read_rx_bits_tty_siemens();
+#endif
+            ESP_LOGI("TTY", "Received character: '%c' (0x%02X)", c, c);
+            xSemaphoreTake(cmd_mutex_stream, portMAX_DELAY);
+            stream_manager.publish(c, SOURCE_TELETYPE);
+            xSemaphoreGive(cmd_mutex_stream);
         }
     }
 }
@@ -57,12 +82,16 @@ Teletype::Teletype(uint8_t baudrate, uint8_t rx_pin, uint8_t tx_pin, uint8_t max
     TTY_MAX_CHARS_PAPER = max_chars;
     TTY_RX_PIN = static_cast<gpio_num_t>(rx_pin);
     TTY_TX_PIN = static_cast<gpio_num_t>(tx_pin);
-
+#ifdef CREED
+    invert_rx = false;
+#else
     invert_rx = true;
+#endif
     invert_tx = false;
 
     // Configure GPIO pins
     // Set RX pin as output
+
     gpio_config_t io_conf = {
         .pin_bit_mask = (uint32_t)(1ULL << TTY_TX_PIN),
         .mode = GPIO_MODE_OUTPUT,
@@ -71,7 +100,15 @@ Teletype::Teletype(uint8_t baudrate, uint8_t rx_pin, uint8_t tx_pin, uint8_t max
         .intr_type = GPIO_INTR_DISABLE,
     };
     gpio_config(&io_conf);
-    gpio_set_level(TTY_TX_PIN, invert_tx ^ 1);                           // Set TX high initially
+    gpio_set_level(TTY_TX_PIN, invert_tx ^ 1);  // Set TX high initially
+    io_conf = {
+        .pin_bit_mask = (uint32_t)(1ULL << DEBUG_PIN),
+        .mode = GPIO_MODE_OUTPUT,
+        .pull_up_en = GPIO_PULLUP_DISABLE,
+        .pull_down_en = GPIO_PULLDOWN_DISABLE,
+        .intr_type = GPIO_INTR_DISABLE,
+    };
+    gpio_config(&io_conf);
     io_conf = {
         .pin_bit_mask = (uint32_t)(1ULL << TTY_RX_PIN),
         .mode = GPIO_MODE_INPUT,
@@ -98,13 +135,12 @@ Teletype::Teletype(uint8_t baudrate, uint8_t rx_pin, uint8_t tx_pin, uint8_t max
     }
 
     // Set up GPIO interrupt for RX pin (falling edge)
-    ESP_LOGI(TAG, "Setting up GPIO interru");
     // gpio_set_intr_type(TTY_RX_PIN, GPIO_INTR_ANYEDGE);
     gpio_install_isr_service(0);
-    ESP_LOGI(TAG, "Setting up GPIO interrupt for RX pin %d", TTY_RX_PIN);
     gpio_isr_handler_add(TTY_RX_PIN, gpio_isr_handler, nullptr);
 
     ESP_LOGI(TAG, "Teletype initialized on RX=%d TX=%d, baudrate=%d", TTY_RX_PIN, TTY_TX_PIN, TTY_BAUDRATE);
+    ESP_LOGI(TAG, "RX ISR set on %s edge, with %s enabled", invert_rx ? "rising" : "falling", invert_rx ? "pullup" : "pulldown");
 }
 
 void Teletype::shift_to_numbers() {
@@ -172,7 +208,48 @@ void Teletype::tx_bits_to_tty(uint8_t bits) {
     ESP_LOGD(TAG, "Done write: %x", bits);
 }
 
-uint8_t Teletype::read_rx_bits_tty() {
+bool start_bit_possible{false};
+bool start_bit_detected{false};
+int64_t start_bit_time{0};
+
+uint8_t Teletype::read_rx_bits_tty_creed() {
+    // disable interrupt while sampling
+    gpio_isr_handler_remove(TTY_RX_PIN);
+
+    uint8_t result{0};
+    /*
+    Pattern:
+    Startbit (1) | bit0 | bit1 | bit2 | bit3 | bit4 | Stopbit (1.5) (Seems absent for creed)
+     ______       ______               _____________           ______
+    |      |_____|      |_____________|             |_________|
+*/
+    ESP_LOGI(TAG, "Waiting for start bit...");
+    // figure out if really startbit
+    result = 0;
+    gpio_set_level(DEBUG_PIN, 1);
+    vTaskDelay(pdMS_TO_TICKS(DELAY_BIT * 1.5));  // wait for the middle of the first bit
+    gpio_set_level(DEBUG_PIN, 0);
+    for (int i = 0; i < 5; i++) {
+        // ESP_LOGI(TAG, "Reading bit %d", gpio_get_level(TTY_RX_PIN));
+        gpio_set_level(DEBUG_PIN, 1);
+        result += (0b1 & gpio_get_level(TTY_RX_PIN)) << i;
+        vTaskDelay(pdMS_TO_TICKS(1));
+        gpio_set_level(DEBUG_PIN, 0);
+        vTaskDelay(pdMS_TO_TICKS(DELAY_BIT + i * 2));
+    }
+    vTaskDelay(pdMS_TO_TICKS(DELAY_STOPBIT));
+    if (invert_rx) {
+        result = (~result & 0b11111);  // mask to 5 bits
+    }
+    ESP_LOGD(TAG, "Result: " BYTE_TO_BINARY_PATTERN, BYTE_TO_BINARY(result));
+    char ret = static_cast<char>(tolower(convert_baudot_char_to_ascii(result)));
+    // re-enable the interrupt
+    gpio_isr_handler_add(TTY_RX_PIN, gpio_isr_handler, nullptr);
+    ESP_LOGI(TAG, "Read bits: %x, char: '%c'", result, ret);
+    return ret;
+}
+
+uint8_t Teletype::read_rx_bits_tty_siemens() {
     // disable interrupt while sampling
     gpio_isr_handler_remove(TTY_RX_PIN);
 
@@ -203,10 +280,8 @@ uint8_t Teletype::read_rx_bits_tty() {
     }
 
     char ret = static_cast<char>(tolower(convert_baudot_char_to_ascii(result)));
-    xSemaphoreTake(cmd_mutex_stream, portMAX_DELAY);
-    stream_manager.publish(ret, SOURCE_TELETYPE);
-    xSemaphoreGive(cmd_mutex_stream);
     // re-enable the interrupt
+    ESP_LOGD(TAG, "Result: " BYTE_TO_BINARY_PATTERN, BYTE_TO_BINARY(result));
     gpio_isr_handler_add(TTY_RX_PIN, gpio_isr_handler, nullptr);
     ESP_LOGI(TAG, "Read bits: %x, char: '%c'", result, ret);
     return ret;

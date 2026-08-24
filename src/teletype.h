@@ -66,7 +66,8 @@ class Teletype {
     uint8_t characters_on_paper{};
 
     void tx_bits_to_tty(uint8_t bits);
-    uint8_t read_rx_bits_tty();
+    uint8_t read_rx_bits_tty_creed();
+    uint8_t read_rx_bits_tty_siemens();
     static void tty_rx_task(void* pvParameters);
     void shift_to_numbers();
     void shift_to_letters();

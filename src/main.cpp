@@ -20,7 +20,6 @@
 #include "serial_handler.h"
 #include "stream_manager.h"
 #include "teletype.h"
-
 #define RX_PIN 4
 #define TX_PIN 5
 #define WIFI_LED 2
@@ -309,6 +308,7 @@ extern "C" void app_main() {
     });
 
     stream_manager.subscribe([](char c, int source) {
+        // write to teletype, only if source is not teletype
         if (tty != nullptr && source != SOURCE_TELETYPE) {
             return;
         }
