@@ -20,8 +20,8 @@
 #include "serial_handler.h"
 #include "stream_manager.h"
 #include "teletype.h"
-#define RX_PIN 4
-#define TX_PIN 5
+#define RX_PIN 4  // D2
+#define TX_PIN 5  // D1
 #define WIFI_LED 2
 #define TELNET_PORT 23
 #define MAX_CLIENTS 5
@@ -95,6 +95,7 @@ StreamManager stream_manager;
 CommandHandler* command_handler = nullptr;
 
 SemaphoreHandle_t cmd_mutex_stream;
+QueueHandle_t tty_rx_queue;
 int telnet_socket = -1;
 int irc_socket = -1;
 int client_sockets[MAX_CLIENTS] = {-1, -1, -1, -1, -1};
@@ -301,7 +302,7 @@ extern "C" void app_main() {
     ESP_LOGI(TAG, "Starting ESP8266 Teletype Multi-Source");
     ESP_ERROR_CHECK(nvs_flash_init());
     cmd_mutex_stream = xSemaphoreCreateMutex();
-
+    tty_rx_queue = xQueueCreate(64, sizeof(char));
     serial_handler = new SerialHandler();
     command_handler = new CommandHandler();
     // Initialize teletype
@@ -334,7 +335,7 @@ extern "C" void app_main() {
 
     stream_manager.subscribe([](char c, int source) {
         // write to teletype, only if source is not teletype
-        if (tty != nullptr && source != SOURCE_TELETYPE) {
+        if (tty == nullptr || source == SOURCE_TELETYPE) {
             return;
         }
         tty->print_ascii_character_to_tty(c);
@@ -354,7 +355,7 @@ extern "C" void app_main() {
     //  Create tasks
     //  xTaskCreate(telnetTask, "Telnet", 4096, nullptr, 5, nullptr);
     // xTaskCreate(streamTask, "Stream", 4096, nullptr, 5, nullptr);
-    xTaskCreate(SerialHandler::uart_rx_task, "UART_RX", 4096, nullptr, 5, nullptr);
+    xTaskCreate(SerialHandler::uart_rx_task, "UART_RX", 4096, nullptr, 3, nullptr);
 
     // write telex header
     vTaskDelay(pdMS_TO_TICKS(5000));

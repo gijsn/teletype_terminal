@@ -265,19 +265,19 @@ When the task is done, it will reset the command_in_progress flag to allow new c
 void CommandHandler::input(char c) {
     // query if task is done, then reset command_in_progress for command parser
     if (command_task_handle != nullptr && eTaskGetState(command_task_handle) != eRunning && eTaskGetState(command_task_handle) != eReady && eTaskGetState(command_task_handle) != eBlocked) {
-        ESP_LOGI(TAG, "Command task finished, resetting command_in_progress");
+        ESP_LOGD(TAG, "Command task finished, resetting command_in_progress");
         command_in_progress = false;
         command_task_handle = nullptr;
     } else {
-        ESP_LOGI(TAG, "Command task state: %d", command_task_handle != nullptr ? eTaskGetState(command_task_handle) : -1);
+        ESP_LOGD(TAG, "Command task state: %d", command_task_handle != nullptr ? eTaskGetState(command_task_handle) : -1);
         // return;
     }
-    ESP_LOGI(TAG, "Received command input: '%c'", c);
+    ESP_LOGD(TAG, "Received command input: '%c'", c);
     if (c == '\n' || c == '\r') {
         if (!command_in_progress || strlen(buf) == 0) {
             return;
         }
-        ESP_LOGI(TAG, "Command executed: '%s'", buf);
+        ESP_LOGD(TAG, "Command executed: '%s'", buf);
         char* cmd_copy = (char*)malloc(strlen(buf) + 1);
         if (cmd_copy != nullptr) {
             strcpy(cmd_copy, buf);
@@ -318,7 +318,7 @@ void CommandHandler::input(char c) {
             c = (char)toupper(c);
             capital = false;
         }
-        ESP_LOGI(TAG, "Appending '%c' to command buffer %s, strlen %d", c, buf, strlen(buf));
+        ESP_LOGD(TAG, "Appending '%c' to command buffer %s, strlen %d", c, buf, strlen(buf));
         const char c2[2] = {c, '\0'};  // Create a string with the character and null terminator
         strcat(buf, c2);               // Append character to buffer
     } else {

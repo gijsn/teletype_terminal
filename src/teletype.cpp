@@ -10,7 +10,10 @@
 #include <cstring>
 
 // local includes
-
+#ifdef CREED
+gpio_num_t TTY_BELL_PIN = GPIO_NUM_14;
+gpio_num_t TTY_WRU_PIN = GPIO_NUM_12;
+#endif
 #include "command_handler.h"
 #include "stream_manager.h"
 #include "teletype.h"
@@ -20,8 +23,7 @@ constexpr const char TAG[] = "TTY";
 
 static TaskHandle_t tty_rx_task_handle = nullptr;
 extern StreamManager stream_manager;
-extern SemaphoreHandle_t cmd_mutex_stream;
-
+extern QueueHandle_t tty_rx_queue;
 #define START_BIT_DEBOUNCE_TIME_CREED 10  // in milliseconds
 
 #define BYTE_TO_BINARY_PATTERN "%c%c%c%c%c%c%c%c"
@@ -35,6 +37,7 @@ extern SemaphoreHandle_t cmd_mutex_stream;
         ((byte) & 0x02 ? '1' : '0'), \
         ((byte) & 0x01 ? '1' : '0')
 #define DEBUG_PIN GPIO_NUM_16  // D0
+
 // handle the incoming bits from the teletype, triggered by the GPIO interrupt
 static void IRAM_ATTR gpio_isr_handler(void* arg) {
     if (tty_rx_task_handle != nullptr) {
@@ -46,6 +49,19 @@ static void IRAM_ATTR gpio_isr_handler(void* arg) {
         }
     }
 }
+
+static void IRAM_ATTR gpio_bell_handler(void* arg) {
+    // TODO: at some point, trigger buzzer
+    // gpio_set_level(DEBUG_PIN, 1);
+    // gpio_set_level(DEBUG_PIN, 0);
+}
+
+static void IRAM_ATTR gpio_wru_handler(void* arg) {
+    // TODO: at some point, trigger Who aRe You
+    // gpio_set_level(DEBUG_PIN, 1);
+    // gpio_set_level(DEBUG_PIN, 0);
+}
+
 /*
 run always in a separate task, triggered by the GPIO interrupt
 Interrupt will notify the task, then the bits will be read
@@ -57,10 +73,10 @@ void Teletype::tty_rx_task(void* pvParameters) {
     Teletype* self = static_cast<Teletype*>(pvParameters);
     ESP_LOGI("TTY", "ISR");
     while (true) {
-        ESP_LOGI("TTY", "Waiting for RX");
+        ESP_LOGD("TTY", "Waiting for RX");
         // wait for notification from the ISR
         ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
-        ESP_LOGI("TTY", "Received notification for RX task");
+        ESP_LOGD("TTY", "Received notification for RX task");
         gpio_set_level(DEBUG_PIN, 0);
         char c = '\0';
         if (self != nullptr) {
@@ -69,10 +85,8 @@ void Teletype::tty_rx_task(void* pvParameters) {
 #else
             c = self->read_rx_bits_tty_siemens();
 #endif
-            ESP_LOGI("TTY", "Received character: '%c' (0x%02X)", c, c);
-            xSemaphoreTake(cmd_mutex_stream, portMAX_DELAY);
-            stream_manager.publish(c, SOURCE_TELETYPE);
-            xSemaphoreGive(cmd_mutex_stream);
+            // ESP_LOGI("TTY", "Received character: '%c' (0x%02X)", c, c);
+            xQueueSend(tty_rx_queue, &c, 0);  // non-blocking, fast
         }
     }
 }
@@ -93,7 +107,7 @@ Teletype::Teletype(uint8_t baudrate, uint8_t rx_pin, uint8_t tx_pin, uint8_t max
 #else
     invert_rx = true;
 #endif
-    invert_tx = false;
+    invert_tx = true;
 
     // Configure GPIO pins
     // Set RX pin as output
@@ -124,6 +138,24 @@ Teletype::Teletype(uint8_t baudrate, uint8_t rx_pin, uint8_t tx_pin, uint8_t max
     };
     gpio_config(&io_conf);
 
+    io_conf = {
+        .pin_bit_mask = (uint32_t)(1ULL << TTY_BELL_PIN),
+        .mode = GPIO_MODE_INPUT,
+        .pull_up_en = GPIO_PULLUP_DISABLE,
+        .pull_down_en = GPIO_PULLDOWN_DISABLE,
+        .intr_type = GPIO_INTR_POSEDGE                                   // Enable interrupt for RX pin
+    };
+    gpio_config(&io_conf);
+
+    io_conf = {
+        .pin_bit_mask = (uint32_t)(1ULL << TTY_WRU_PIN),
+        .mode = GPIO_MODE_INPUT,
+        .pull_up_en = GPIO_PULLUP_DISABLE,
+        .pull_down_en = GPIO_PULLDOWN_DISABLE,
+        .intr_type = GPIO_INTR_POSEDGE                                   // Enable interrupt for RX pin
+    };
+    gpio_config(&io_conf);
+
     kb_mode = MODE_UNKNOWN;
     pr_mode = MODE_UNKNOWN;
     vTaskDelay(pdMS_TO_TICKS(DELAY_BIT * 5));
@@ -144,7 +176,8 @@ Teletype::Teletype(uint8_t baudrate, uint8_t rx_pin, uint8_t tx_pin, uint8_t max
     // gpio_set_intr_type(TTY_RX_PIN, GPIO_INTR_ANYEDGE);
     gpio_install_isr_service(0);
     gpio_isr_handler_add(TTY_RX_PIN, gpio_isr_handler, nullptr);
-
+    gpio_isr_handler_add(TTY_BELL_PIN, gpio_bell_handler, nullptr);
+    gpio_isr_handler_add(TTY_WRU_PIN, gpio_wru_handler, nullptr);
     ESP_LOGI(TAG, "Teletype initialized on RX=%d TX=%d, baudrate=%d", TTY_RX_PIN, TTY_TX_PIN, TTY_BAUDRATE);
     ESP_LOGI(TAG, "RX ISR set on %s edge, with %s enabled", invert_rx ? "rising" : "falling", invert_rx ? "pullup" : "pulldown");
 }
@@ -193,7 +226,7 @@ bool Teletype::get_tx_polarity() {
     return invert_tx;
 }
 void Teletype::tx_bits_to_tty(uint8_t bits) {
-    ESP_LOGD(TAG, "Write: %x, delay %d", bits, DELAY_BIT);
+    ESP_LOGI(TAG, "Write: %x, delay %d", bits, DELAY_BIT);
     bool tx_bit{false};
 
     // Startbit, TODO: check polarity
@@ -234,16 +267,20 @@ uint8_t Teletype::read_rx_bits_tty_creed() {
     result = 0;
     gpio_set_level(DEBUG_PIN, 1);
     vTaskDelay(pdMS_TO_TICKS(DELAY_BIT * 1.5));  // wait for the middle of the first bit
+    // os_delay_us(DELAY_BIT * 1000);
     gpio_set_level(DEBUG_PIN, 0);
     for (int i = 0; i < 5; i++) {
         // ESP_LOGI(TAG, "Reading bit %d", gpio_get_level(TTY_RX_PIN));
         gpio_set_level(DEBUG_PIN, 1);
         result += (0b1 & gpio_get_level(TTY_RX_PIN)) << i;
         vTaskDelay(pdMS_TO_TICKS(1));
+        // os_delay_us(100);
         gpio_set_level(DEBUG_PIN, 0);
-        vTaskDelay(pdMS_TO_TICKS(DELAY_BIT + i * 2));
+        // os_delay_us((DELAY_BIT + i * 2) * 1000);
+        vTaskDelay(pdMS_TO_TICKS((DELAY_BIT + i * 2)));
     }
-    vTaskDelay(pdMS_TO_TICKS(DELAY_STOPBIT));
+    // os_delay_us(DELAY_STOPBIT * 1000);
+    vTaskDelay(pdMS_TO_TICKS(DELAY_BIT));
     if (invert_rx) {
         result = (~result & 0b11111);  // mask to 5 bits
     }
@@ -277,7 +314,7 @@ uint8_t Teletype::read_rx_bits_tty_siemens() {
             ESP_LOGI(TAG, "Reading bit %d", gpio_get_level(TTY_RX_PIN));
             result += (0b1 & gpio_get_level(TTY_RX_PIN)) << i;
         }
-        vTaskDelay(pdMS_TO_TICKS(DELAY_STOPBIT));
+        vTaskDelay(pdMS_TO_TICKS(2));  // do not delay for full stopbit
     } else {
         ESP_LOGE(TAG, "ERROR! Start bit not 0! False trigger?");
     }
@@ -294,7 +331,7 @@ uint8_t Teletype::read_rx_bits_tty_siemens() {
 }
 
 void Teletype::print_ascii_character_to_tty(char c) {
-    print_to_tty(convert_ascii_character_to_baudot(c));  // TODO: error checking (need to decide how)
+    // print_to_tty(convert_ascii_character_to_baudot(c));  // TODO: error checking (need to decide how)
 }
 
 void Teletype::print_to_tty(print_baudot_char_t bd_char) {

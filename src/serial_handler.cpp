@@ -18,13 +18,13 @@
 namespace {
 constexpr const char TAG[] = "SERIAL";
 constexpr int UART_NUM = 0;  // UART0
-constexpr int UART_BAUD_RATE = 115200;
+constexpr int UART_BAUD_RATE = 921600;
 constexpr int BUF_SIZE = 256;
 }  // namespace
 
 extern StreamManager stream_manager;
 extern SemaphoreHandle_t cmd_mutex_stream;
-
+extern QueueHandle_t tty_rx_queue;
 // static members
 bool SerialHandler::flush_buffer{};
 static xQueueHandle uart_queue = nullptr;
@@ -55,6 +55,7 @@ void SerialHandler::uart_rx_task(void* pvParameters)  {
     while (1) {
         // Check for UART events
         uart_event_t event;
+        char c;
         if (xQueueReceive(uart_queue, &event, pdMS_TO_TICKS(10))) {
             switch (event.type) {
                 case UART_DATA: {
@@ -79,6 +80,11 @@ void SerialHandler::uart_rx_task(void* pvParameters)  {
                 default:
                     break;
             }
+        }else if (xQueueReceive(tty_rx_queue, &c, pdMS_TO_TICKS(10))) {
+            // No UART event received, but there's data in the TTY queue
+            xSemaphoreTake(cmd_mutex_stream, portMAX_DELAY);
+            stream_manager.publish(&c, SOURCE_TELETYPE);
+            xSemaphoreGive(cmd_mutex_stream);
         }
 
         if (flush_buffer) {
