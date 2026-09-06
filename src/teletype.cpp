@@ -107,7 +107,7 @@ Teletype::Teletype(uint8_t baudrate, uint8_t rx_pin, uint8_t tx_pin, uint8_t max
 #else
     invert_rx = true;
 #endif
-    invert_tx = true;
+    invert_tx = false;
 
     // Configure GPIO pins
     // Set RX pin as output
@@ -331,7 +331,7 @@ uint8_t Teletype::read_rx_bits_tty_siemens() {
 }
 
 void Teletype::print_ascii_character_to_tty(char c) {
-    // print_to_tty(convert_ascii_character_to_baudot(c));  // TODO: error checking (need to decide how)
+    print_to_tty(convert_ascii_character_to_baudot(c));  // TODO: error checking (need to decide how)
 }
 
 void Teletype::print_to_tty(print_baudot_char_t bd_char) {
