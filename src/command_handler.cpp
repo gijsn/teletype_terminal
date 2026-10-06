@@ -49,7 +49,7 @@ void CommandHandler::cmd_help(char* arg) {
     asprintf(&response_buf, "Available commands:\r\n");
     for (const auto& cmd : cmdList) {
         ESP_LOGI(TAG, "command %s", cmd.funcTag);
-        asprintf(&response_buf, "%s->%s\r\n", response_buf, cmd.funcTag);
+        asprintf(&response_buf, "%s/sc%s\r\n", response_buf, cmd.funcTag);
     }
 }
 
@@ -92,7 +92,7 @@ void CommandHandler::cmd_scan(char* arg) {
     esp_wifi_scan_get_ap_records(&ap_count, ap_list);
 
     asprintf(&response_buf, "Found %d networks:\r\n", ap_count);
-    asprintf(&response_buf, "%sNo. SSID                         RSSI Auth\r\n", response_buf);
+    asprintf(&response_buf, "%sNo. SSID                           RSSI Auth\r\n", response_buf);
     asprintf(&response_buf, "%s--- ------------------------------ ---- -----\r\n", response_buf);
 
     for (uint16_t i = 0; i < ap_count; i++) {
@@ -127,7 +127,7 @@ void CommandHandler::cmd_scan(char* arg) {
         char ssid_str[33];
         strcpy((char*)ssid_str, (char*)ap_list[i].ssid);
 
-        asprintf(&response_buf, "%s%2d  %-30s %4d %s\r\n",
+        asprintf(&response_buf, "%s%3d  %-30s %4d  %s\r\n",
                  response_buf, i + 1, ssid_str, ap_list[i].rssi, authmode_str);
     }
     free(ap_list);
@@ -234,6 +234,7 @@ void CommandHandler::execute_command_task(void* arg) {
             if (response_buf && strlen(response_buf) > 0) {
                 ESP_LOGD(TAG, "Command response: %s", response_buf);
                 xSemaphoreTake(cmd_mutex_stream, portMAX_DELAY);
+                stream_manager.publish("\r\n", SOURCE_COMMAND);
                 stream_manager.publish(response_buf, SOURCE_COMMAND);  // local only
                 xSemaphoreGive(cmd_mutex_stream);
             }
