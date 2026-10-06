@@ -61,10 +61,11 @@ class Teletype {
     gpio_num_t TTY_TX_PIN;
 
     // State variables
-    tty_mode_t kb_mode{};  // keyboard mode
     tty_mode_t pr_mode{};  // printer mode
     uint8_t characters_on_paper{};
 
+    void tx_bits_to_tty_creed(uint8_t bits);
+    void tx_bits_to_tty_siemens(uint8_t bits);
     void tx_bits_to_tty(uint8_t bits);
     uint8_t read_rx_bits_tty_creed();
     uint8_t read_rx_bits_tty_siemens();

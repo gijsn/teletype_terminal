@@ -11,8 +11,9 @@
 
 // local includes
 #ifdef CREED
-gpio_num_t TTY_BELL_PIN = GPIO_NUM_14;
-gpio_num_t TTY_WRU_PIN = GPIO_NUM_12;
+// gpio_num_t TTY_BELL_PIN = GPIO_NUM_14;
+// gpio_num_t TTY_WRU_PIN = GPIO_NUM_12;
+gpio_num_t TTY_SEND_RECEIVE_PIN = GPIO_NUM_14;
 #endif
 #include "command_handler.h"
 #include "stream_manager.h"
@@ -42,6 +43,9 @@ extern QueueHandle_t tty_rx_queue;
 static void IRAM_ATTR gpio_isr_handler(void* arg) {
     if (tty_rx_task_handle != nullptr) {
         BaseType_t xHigherPriorityTaskWoken = pdFALSE;
+        if (gpio_get_level(TTY_SEND_RECEIVE_PIN) == 1) {
+            return;  // Teletype is not ready to send, ignore the interrupt
+        }
         vTaskNotifyGiveFromISR(tty_rx_task_handle, &xHigherPriorityTaskWoken);
         gpio_set_level(DEBUG_PIN, 1);
         if (xHigherPriorityTaskWoken != pdFALSE) {
@@ -96,7 +100,7 @@ Teletype::Teletype(uint8_t baudrate, uint8_t rx_pin, uint8_t tx_pin, uint8_t max
 
     // initialize teletype values (baudrate etc)
     TTY_BAUDRATE = baudrate;
-    DELAY_BIT = (1000 / TTY_BAUDRATE);  // in milliseconds
+    DELAY_BIT = (1000 / TTY_BAUDRATE);        // in milliseconds
 
     DELAY_STOPBIT = DELAY_BIT * 1.5;
     TTY_MAX_CHARS_PAPER = max_chars;
@@ -108,7 +112,28 @@ Teletype::Teletype(uint8_t baudrate, uint8_t rx_pin, uint8_t tx_pin, uint8_t max
     invert_rx = true;
 #endif
     invert_tx = false;
+    // x wordt O of M
+    // bitorder 54321 (MSB - LSB)
+    //      O = 11000
+    //      M = 11100
+    //      X = 11101
+    // O wordt T
+    // P wordt T
+    //      O = 11000
+    //      T = 10000
 
+    // P = 10110,
+    //                         Start        Stop
+    //                           _     _ _   _ _
+    // on scope, looks like       |_ _|   |_|
+    //                             S 0 1 1 0 1 S
+    //                               1 2 3 4 5
+    //                          LSB         MSB
+    // A =     A
+    //                          _   _ _       _
+    //                           |_|   |_ _ _|
+    //                            S 1 1 0 0 0 S
+    // 1 is low, 0 is high
     // Configure GPIO pins
     // Set RX pin as output
 
@@ -139,24 +164,23 @@ Teletype::Teletype(uint8_t baudrate, uint8_t rx_pin, uint8_t tx_pin, uint8_t max
     gpio_config(&io_conf);
 
     io_conf = {
-        .pin_bit_mask = (uint32_t)(1ULL << TTY_BELL_PIN),
+        .pin_bit_mask = (uint32_t)(1ULL << TTY_SEND_RECEIVE_PIN),
         .mode = GPIO_MODE_INPUT,
         .pull_up_en = GPIO_PULLUP_DISABLE,
         .pull_down_en = GPIO_PULLDOWN_DISABLE,
-        .intr_type = GPIO_INTR_POSEDGE                                   // Enable interrupt for RX pin
     };
     gpio_config(&io_conf);
 
-    io_conf = {
-        .pin_bit_mask = (uint32_t)(1ULL << TTY_WRU_PIN),
-        .mode = GPIO_MODE_INPUT,
-        .pull_up_en = GPIO_PULLUP_DISABLE,
-        .pull_down_en = GPIO_PULLDOWN_DISABLE,
-        .intr_type = GPIO_INTR_POSEDGE                                   // Enable interrupt for RX pin
-    };
-    gpio_config(&io_conf);
+    // io_conf = {
+    //     .pin_bit_mask = (uint32_t)(1ULL << TTY_WRU_PIN),
+    //     .mode = GPIO_MODE_INPUT,
+    //     .pull_up_en = GPIO_PULLUP_DISABLE,
+    //     .pull_down_en = GPIO_PULLDOWN_DISABLE,
+    //     .intr_type = GPIO_INTR_POSEDGE                                   // Enable interrupt for RX pin
+    // };
+    // gpio_config(&io_conf);
 
-    kb_mode = MODE_UNKNOWN;
+    pr_mode = MODE_UNKNOWN;
     pr_mode = MODE_UNKNOWN;
     vTaskDelay(pdMS_TO_TICKS(DELAY_BIT * 5));
     shift_to_letters();
@@ -176,8 +200,8 @@ Teletype::Teletype(uint8_t baudrate, uint8_t rx_pin, uint8_t tx_pin, uint8_t max
     // gpio_set_intr_type(TTY_RX_PIN, GPIO_INTR_ANYEDGE);
     gpio_install_isr_service(0);
     gpio_isr_handler_add(TTY_RX_PIN, gpio_isr_handler, nullptr);
-    gpio_isr_handler_add(TTY_BELL_PIN, gpio_bell_handler, nullptr);
-    gpio_isr_handler_add(TTY_WRU_PIN, gpio_wru_handler, nullptr);
+    // gpio_isr_handler_add(TTY_BELL_PIN, gpio_bell_handler, nullptr);
+    // gpio_isr_handler_add(TTY_WRU_PIN, gpio_wru_handler, nullptr);
     ESP_LOGI(TAG, "Teletype initialized on RX=%d TX=%d, baudrate=%d", TTY_RX_PIN, TTY_TX_PIN, TTY_BAUDRATE);
     ESP_LOGI(TAG, "RX ISR set on %s edge, with %s enabled", invert_rx ? "rising" : "falling", invert_rx ? "pullup" : "pulldown");
 }
@@ -225,7 +249,43 @@ bool Teletype::get_rx_polarity() {
 bool Teletype::get_tx_polarity() {
     return invert_tx;
 }
+
 void Teletype::tx_bits_to_tty(uint8_t bits) {
+#ifdef CREED
+    tx_bits_to_tty_creed(bits);
+#else
+    tx_bits_to_tty_siemens(bits);
+#endif
+    return;
+}
+
+void Teletype::tx_bits_to_tty_creed(uint8_t bits) {
+    ESP_LOGI(TAG, "Write: %x, delay %d", bits, DELAY_BIT);
+    bool tx_bit{false};
+    while (gpio_get_level(TTY_SEND_RECEIVE_PIN) == 0) {
+        ESP_LOGW(TAG, "Waiting for teletype to be ready to send...");
+        vTaskDelay(pdMS_TO_TICKS(DELAY_BIT));
+    }
+    vTaskDelay(pdMS_TO_TICKS(DELAY_BIT * 2));  // wait for the middle of the start bit
+    // Startbit, TODO: check polarity
+    gpio_set_level(TTY_TX_PIN, invert_tx ^ 0);  // Start bit is LOW
+    vTaskDelay(pdMS_TO_TICKS(DELAY_BIT));
+
+    for (int i = 0; i < NUMBER_OF_BITS; i++) {
+        tx_bit = (bits & (1 << i));
+        gpio_set_level(TTY_TX_PIN, invert_tx ^ tx_bit);
+        vTaskDelay(pdMS_TO_TICKS(DELAY_BIT + i * 2));
+    }
+
+    // Stopbit
+    gpio_set_level(TTY_TX_PIN, invert_tx ^ 1);
+
+    vTaskDelay(pdMS_TO_TICKS(DELAY_STOPBIT));
+    // vTaskDelay(pdMS_TO_TICKS(DELAY_STOPBIT * 3));
+    ESP_LOGD(TAG, "Done write: %x", bits);
+}
+
+void Teletype::tx_bits_to_tty_siemens(uint8_t bits) {
     ESP_LOGI(TAG, "Write: %x, delay %d", bits, DELAY_BIT);
     bool tx_bit{false};
 
@@ -265,6 +325,7 @@ uint8_t Teletype::read_rx_bits_tty_creed() {
     ESP_LOGI(TAG, "Waiting for start bit...");
     // figure out if really startbit
     result = 0;
+    // save the last printed character to check for echo to prevent interruptions from changing it
     gpio_set_level(DEBUG_PIN, 1);
     vTaskDelay(pdMS_TO_TICKS(DELAY_BIT * 1.5));  // wait for the middle of the first bit
     // os_delay_us(DELAY_BIT * 1000);
@@ -448,16 +509,16 @@ char Teletype::convert_baudot_char_to_ascii(uint8_t bits) {
     // TODO: Remove this hack if we ever loopback locally
     switch (bits) {
         case SWITCH_LETTER:
-            kb_mode = MODE_LETTER;
+            pr_mode = MODE_LETTER;
             break;
         case SWITCH_NUMBER:
-            kb_mode = MODE_NUMBER;
+            pr_mode = MODE_NUMBER;
             break;
         default:
             for (int i = 0; i < NUMBER_OF_BAUDOT_CHARS && !found; i++)  // found is unused
             {
                 if (baudot_alphabet[i].bitcode == bits) {
-                    switch (kb_mode) {
+                    switch (pr_mode) {
                         case MODE_LETTER:
                             ret = baudot_alphabet[i].mode_letter;
                             found = true;
