@@ -139,10 +139,10 @@ void CommandHandler::cmd_wifi(char* arg) {
     esp_wifi_get_config(ESP_IF_WIFI_STA, &cfg);
 
     if (arg == NULL) {
-        ESP_LOGI(TAG, "Usage: \"wifi scan\" or \"wifi {ssid} [password]\"");
+        ESP_LOGI(TAG, "Usage: wifi {ssid} [password]");
         tcpip_adapter_ip_info_t ip_info;
         tcpip_adapter_get_ip_info(TCPIP_ADAPTER_IF_STA, &ip_info);
-        asprintf(&response_buf, "Usage: 'wifi scan' or 'wifi {ssid} [password]'\r\nCurrent SSID: %s\r\nIs connected: %s\r\n", cfg.sta.ssid, ip_info.ip.addr ? "Yes" : "No");
+        asprintf(&response_buf, "Usage: wifi ssid (password)\r\nCurrent SSID: %s\r\nIs connected: %s\r\n", cfg.sta.ssid, ip_info.ip.addr ? "Yes" : "No");
         return;
     }
 

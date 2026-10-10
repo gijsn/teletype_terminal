@@ -62,10 +62,6 @@ static character baudot_alphabet[] =
         {0b00100, ' ', ' ', INCREMENT_CHAR_COUNT},
         {0b00000, 0x0, 0x0, NO_INCREMENT_CHAR_COUNT}};
 
-// A tunrs into W
-
-// 11000 --> 11001
-
 static constexpr char replacements[][2]{
     {'\"', '\''}};
 

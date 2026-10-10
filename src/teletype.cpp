@@ -281,7 +281,6 @@ void Teletype::tx_bits_to_tty_creed(uint8_t bits) {
     gpio_set_level(TTY_TX_PIN, invert_tx ^ 1);
 
     vTaskDelay(pdMS_TO_TICKS(DELAY_STOPBIT));
-    // vTaskDelay(pdMS_TO_TICKS(DELAY_STOPBIT * 3));
     ESP_LOGD(TAG, "Done write: %x", bits);
 }
 
@@ -318,11 +317,12 @@ uint8_t Teletype::read_rx_bits_tty_creed() {
     uint8_t result{0};
     /*
     Pattern:
-    Startbit (1) | bit0 | bit1 | bit2 | bit3 | bit4 | Stopbit (1.5) (Seems absent for creed)
-     ______       ______               _____________           ______
-    |      |_____|      |_____________|             |_________|
+    Startbit (1) | bit0 | bit1 | bit2 | bit3 | bit4 | Stopbit (1.5)
+    ______        ______        _____________        ______________
+    s     |______|      |______|             |______|
+
 */
-    ESP_LOGI(TAG, "Waiting for start bit...");
+    ESP_LOGD(TAG, "Waiting for start bit...");
     // figure out if really startbit
     result = 0;
     // save the last printed character to check for echo to prevent interruptions from changing it
@@ -398,6 +398,10 @@ void Teletype::print_ascii_character_to_tty(char c) {
 void Teletype::print_to_tty(print_baudot_char_t bd_char) {
     if (pr_mode != MODE_BOTH_POSSIBLE && pr_mode != bd_char.mode) {
         set_mode(bd_char.mode);
+        // send dummy character twice, fix for stikcy mode change
+        tx_bits_to_tty(0x00);
+        tx_bits_to_tty(0x00);
+        // wait for the mode change to be processed
     }
     tx_bits_to_tty(bd_char.bitcode);
     switch (bd_char.cc_action) {
@@ -408,6 +412,7 @@ void Teletype::print_to_tty(print_baudot_char_t bd_char) {
                 // this->decide_on_crnl("\r\n");
                 tx_bits_to_tty(convert_ascii_character_to_baudot('\r').bitcode);
                 tx_bits_to_tty(convert_ascii_character_to_baudot('\n').bitcode);
+                vTaskDelay(pdMS_TO_TICKS(DELAY_BIT * 5));
                 characters_on_paper = 0;
             }
             break;

@@ -109,7 +109,7 @@ static void event_handler(void* arg, esp_event_base_t event_base,
         xEventGroupClearBits(s_wifi_event_group, WIFI_CONNECTED_BIT);
         xEventGroupClearBits(s_wifi_event_group, WIFI_FAIL_BIT);
         xEventGroupSetBits(s_wifi_event_group, WIFI_CONNECTING_BIT);
-        stream_manager.publish("Connecting to WiFi...\r\n", SOURCE_COMMAND);
+        // stream_manager.publish("Connecting to WiFi...\r\n", SOURCE_COMMAND);
     } else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_DISCONNECTED) {
         if (s_retry_num < 10) {
             esp_wifi_connect();
@@ -135,7 +135,7 @@ static void event_handler(void* arg, esp_event_base_t event_base,
         wifi_config_t conf;
         esp_wifi_get_config(ESP_IF_WIFI_STA, &conf);
         char* resp;
-        asprintf(&resp, "Connected to WiFi network with SSID: %s, and IP %s\r\n", conf.sta.ssid, ip4addr_ntoa(&event->ip_info.ip));
+        asprintf(&resp, "Connected to WiFi: %s, and IP %s\r\n", conf.sta.ssid, ip4addr_ntoa(&event->ip_info.ip));
         xSemaphoreTake(cmd_mutex_stream, portMAX_DELAY);
         stream_manager.publish(resp, SOURCE_COMMAND);
         free(resp);
